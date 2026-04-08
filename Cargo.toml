@@ -1,0 +1,17 @@
+[package]
+name = "DonJplaning"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[lib]
+name = "don_jplaning"
+
+[dependencies]
+chrono = "0.4.42"
+directories = "6.0.0"
+rusqlite = { version = "0.38.0", features = ["bundled"] }
+slint = "1.15.1"
+
+[build-dependencies]
+slint-build = "1.15.1"

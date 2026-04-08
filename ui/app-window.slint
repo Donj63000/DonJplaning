@@ -1,0 +1,566 @@
+import { Button, ComboBox, HorizontalBox, LineEdit, ScrollView, VerticalBox } from "std-widgets.slint";
+
+export struct WorkerRowData {
+    id: string,
+    display_name: string,
+    job_role_label: string,
+}
+
+export struct DayHeaderData {
+    day: int,
+    label: string,
+}
+
+export struct PlanningCellData {
+    day: int,
+    short_code: string,
+    shift_label: string,
+    time_range: string,
+    style_token: string,
+    has_assignment: bool,
+}
+
+export struct PlanningRowData {
+    worker_id: string,
+    worker_name: string,
+    job_role_label: string,
+    cells: [PlanningCellData],
+}
+
+component SidebarButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    callback clicked;
+
+    min-height: 46px;
+    border-radius: 14px;
+    border-width: 1px;
+    border-color: active ? #658f73 : #d6dfd6;
+    background: active ? #658f73 : #f7f9f7;
+
+    Text {
+        text: label;
+        color: active ? white : #21352b;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: parent.width;
+        height: parent.height;
+    }
+
+    TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component PlanningCellView inherits Rectangle {
+    in property <PlanningCellData> cell_data;
+    in property <string> worker_id;
+    callback selected(string, int);
+
+    min-width: 72px;
+    preferred-width: 72px;
+    min-height: 58px;
+    preferred-height: 58px;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: cell_data.has_assignment ? #bcccbf : #d9e0d9;
+
+    pure function bg(token: string, has_assignment: bool) -> brush {
+        if (!has_assignment) { return #f6f8f6; }
+        if (token == "night-blue") { return #5b7ea6; }
+        if (token == "afternoon-red") { return #c96d67; }
+        if (token == "morning-yellow") { return #d9bf65; }
+        if (token == "day-beige") { return #d3c4a7; }
+        return #e6ebe6;
+    }
+
+    background: bg(cell_data.style_token, cell_data.has_assignment);
+
+    VerticalBox {
+        alignment: center;
+        spacing: 2px;
+
+        Text {
+            text: cell_data.has_assignment ? cell_data.short_code : "";
+            color: #14261d;
+            font-size: 15px;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: cell_data.has_assignment ? cell_data.shift_label : "";
+            color: #1f342b;
+            font-size: 10px;
+            horizontal-alignment: center;
+        }
+    }
+
+    TouchArea {
+        clicked => { root.selected(root.worker_id, root.cell_data.day); }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "DonJplaning";
+    width: 1560px;
+    height: 940px;
+    background: #eef2ee;
+
+    in property <[WorkerRowData]> worker_rows;
+    in property <[DayHeaderData]> day_headers;
+    in property <[PlanningRowData]> planning_rows;
+    in property <[string]> role_options;
+    in property <[string]> shift_options;
+    in property <[string]> assignment_worker_options;
+    in-out property <int> current_page: 0;
+    in-out property <string> status_message: "";
+    in-out property <string> worker_form_id: "";
+    in-out property <string> worker_form_name: "";
+    in-out property <int> worker_form_role_index: 0;
+    in-out property <bool> worker_form_existing: false;
+    in-out property <int> selected_year: 2026;
+    in-out property <int> selected_month: 1;
+    in-out property <int> total_days: 31;
+    in-out property <int> assignment_worker_index: -1;
+    in-out property <int> assignment_shift_index: -1;
+    in-out property <int> assignment_day: 0;
+    in-out property <string> assignment_summary: "";
+    in-out property <string> db_path_hint: "";
+
+    callback clear_worker_form();
+    callback select_worker(string);
+    callback save_worker(string, string, int);
+    callback delete_worker(string);
+    callback previous_month();
+    callback next_month();
+    callback load_month(int, int);
+    callback clear_assignment_form();
+    callback select_cell(string, int);
+    callback save_assignment(int, int, int, int, int);
+    callback delete_assignment(int, int, int, int);
+
+    pure function page_title() -> string {
+        return current_page == 0 ? "Gestion des ouvriers" : "Planning mensuel";
+    }
+
+    pure function month_label(month: int) -> string {
+        if (month == 1) { return "Janvier"; }
+        if (month == 2) { return "Fevrier"; }
+        if (month == 3) { return "Mars"; }
+        if (month == 4) { return "Avril"; }
+        if (month == 5) { return "Mai"; }
+        if (month == 6) { return "Juin"; }
+        if (month == 7) { return "Juillet"; }
+        if (month == 8) { return "Aout"; }
+        if (month == 9) { return "Septembre"; }
+        if (month == 10) { return "Octobre"; }
+        if (month == 11) { return "Novembre"; }
+        if (month == 12) { return "Decembre"; }
+        return "Mois";
+    }
+
+    HorizontalBox {
+        spacing: 18px;
+        padding: 18px;
+
+        Rectangle {
+            min-width: 220px;
+            preferred-width: 220px;
+            border-radius: 22px;
+            border-width: 1px;
+            border-color: #d6dfd6;
+            background: #edf2ed;
+
+            VerticalBox {
+                padding: 18px;
+                spacing: 16px;
+
+                Rectangle {
+                    background: transparent;
+                    min-height: 92px;
+
+                    VerticalBox {
+                        spacing: 6px;
+                        Text { text: "DonJplaning"; color: #193028; font-size: 26px; font-weight: 700; }
+                        Text { text: "Planning d'usine 3x8"; color: #617267; font-size: 14px; }
+                        Text { text: "Theme gris-vert, ambiance Windows 11"; color: #7f8e84; font-size: 11px; }
+                    }
+                }
+
+                SidebarButton { label: "Ouvriers"; active: root.current_page == 0; clicked => { root.current_page = 0; } }
+                SidebarButton { label: "Planning"; active: root.current_page == 1; clicked => { root.current_page = 1; } }
+
+                Rectangle { vertical-stretch: 1; background: transparent; }
+
+                Rectangle {
+                    min-height: 92px;
+                    border-radius: 16px;
+                    border-width: 1px;
+                    border-color: #d6dfd6;
+                    background: #f7f9f7;
+
+                    VerticalBox {
+                        padding: 12px;
+                        spacing: 4px;
+                        Text { text: "Base locale"; color: #244136; font-size: 13px; font-weight: 600; }
+                        Text { text: root.db_path_hint; color: #6d7d73; wrap: word-wrap; font-size: 11px; }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            border-radius: 24px;
+            border-width: 1px;
+            border-color: #d7dfd7;
+            background: #f7f9f7;
+
+            VerticalBox {
+                padding: 20px;
+                spacing: 16px;
+
+                HorizontalBox {
+                    spacing: 12px;
+
+                    VerticalBox {
+                        spacing: 4px;
+                        Text { text: root.page_title(); color: #193028; font-size: 28px; font-weight: 700; }
+                        Text {
+                            text: root.current_page == 0
+                                ? "Ajoute, modifie et supprime les ouvriers et leurs postes."
+                                : "Visualise le planning colore et gere les affectations du mois.";
+                            color: #6c7e73;
+                            font-size: 13px;
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+
+                    if root.status_message != "" : Rectangle {
+                        min-width: 360px;
+                        border-radius: 14px;
+                        border-width: 1px;
+                        border-color: #c9d6ca;
+                        background: #e8f0e8;
+
+                        Text {
+                            text: root.status_message;
+                            color: #28463a;
+                            wrap: word-wrap;
+                            x: 12px;
+                            y: 10px;
+                            width: parent.width - 24px;
+                            height: parent.height - 20px;
+                            font-size: 12px;
+                        }
+                    }
+                }
+
+                if root.current_page == 0 : HorizontalBox {
+                    spacing: 18px;
+
+                    Rectangle {
+                        horizontal-stretch: 1.3;
+                        border-radius: 18px;
+                        border-width: 1px;
+                        border-color: #d7dfd7;
+                        background: #f3f6f3;
+
+                        VerticalBox {
+                            padding: 16px;
+                            spacing: 12px;
+                            Text { text: "Liste des ouvriers"; color: #234035; font-size: 18px; font-weight: 600; }
+
+                            ScrollView {
+                                horizontal-stretch: 1;
+                                vertical-stretch: 1;
+
+                                VerticalBox {
+                                    spacing: 10px;
+
+                                    if root.worker_rows.length == 0 : Rectangle {
+                                        min-height: 120px;
+                                        border-radius: 16px;
+                                        border-width: 1px;
+                                        border-color: #dde4dd;
+                                        background: #fafbfa;
+
+                                        Text {
+                                            text: "Aucun ouvrier enregistre pour l'instant.";
+                                            color: #78897d;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            width: parent.width;
+                                            height: parent.height;
+                                        }
+                                    }
+
+                                    for worker in root.worker_rows : Rectangle {
+                                        min-height: 76px;
+                                        border-radius: 16px;
+                                        border-width: 1px;
+                                        border-color: root.worker_form_id == worker.id ? #9eb9a5 : #dde5dd;
+                                        background: root.worker_form_id == worker.id ? #e3eee6 : #fbfcfb;
+
+                                        VerticalBox {
+                                            padding: 12px;
+                                            spacing: 4px;
+                                            Text { text: worker.display_name; color: #1b3128; font-size: 15px; font-weight: 600; }
+                                            Text { text: worker.job_role_label; color: #557265; font-size: 12px; }
+                                            Text { text: "Identifiant: " + worker.id; color: #7a8c80; font-size: 11px; }
+                                        }
+
+                                        TouchArea { clicked => { root.select_worker(worker.id); } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        min-width: 360px;
+                        preferred-width: 360px;
+                        border-radius: 18px;
+                        border-width: 1px;
+                        border-color: #d7dfd7;
+                        background: #f3f6f3;
+
+                        VerticalBox {
+                            padding: 16px;
+                            spacing: 12px;
+
+                            Text { text: root.worker_form_existing ? "Modifier un ouvrier" : "Nouvel ouvrier"; color: #234035; font-size: 18px; font-weight: 600; }
+                            Text { text: "L'identifiant reste stable apres creation."; color: #708277; font-size: 12px; }
+                            Text { text: "Identifiant"; color: #41594f; font-size: 12px; font-weight: 600; }
+                            worker_id_edit := LineEdit { text <=> root.worker_form_id; read-only: root.worker_form_existing; placeholder-text: "ex: worker-001"; }
+                            Text { text: "Nom complet"; color: #41594f; font-size: 12px; font-weight: 600; }
+                            worker_name_edit := LineEdit { text <=> root.worker_form_name; placeholder-text: "Nom de l'ouvrier"; }
+                            Text { text: "Poste"; color: #41594f; font-size: 12px; font-weight: 600; }
+                            worker_role_combo := ComboBox { model: root.role_options; current-index <=> root.worker_form_role_index; }
+
+                            Rectangle { vertical-stretch: 1; background: transparent; }
+
+                            Button { text: root.worker_form_existing ? "Mettre a jour" : "Enregistrer"; clicked => { root.save_worker(worker_id_edit.text, worker_name_edit.text, worker_role_combo.current-index); } }
+
+                            HorizontalBox {
+                                spacing: 8px;
+                                Button { text: "Nouveau"; clicked => { root.clear_worker_form(); } }
+                                Button { text: "Supprimer"; enabled: root.worker_form_existing; clicked => { root.delete_worker(worker_id_edit.text); } }
+                            }
+                        }
+                    }
+                }
+
+                if root.current_page == 1 : HorizontalBox {
+                    spacing: 18px;
+
+                    Rectangle {
+                        horizontal-stretch: 1.8;
+                        border-radius: 18px;
+                        border-width: 1px;
+                        border-color: #d7dfd7;
+                        background: #f3f6f3;
+
+                        VerticalBox {
+                            padding: 16px;
+                            spacing: 12px;
+
+                            HorizontalBox {
+                                spacing: 10px;
+                                Button { text: "<"; clicked => { root.previous_month(); } }
+                                Rectangle {
+                                    min-width: 220px;
+                                    min-height: 40px;
+                                    border-radius: 14px;
+                                    border-width: 1px;
+                                    border-color: #d5ddd6;
+                                    background: #edf3ef;
+                                    Text {
+                                        text: root.month_label(root.selected_month) + " " + root.selected_year;
+                                        color: #233b31;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        font-weight: 600;
+                                        width: parent.width;
+                                        height: parent.height;
+                                    }
+                                }
+                                Button { text: ">"; clicked => { root.next_month(); } }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
+                                Button { text: "Recharger"; clicked => { root.load_month(root.selected_year, root.selected_month); } }
+                            }
+
+                            ScrollView {
+                                horizontal-stretch: 1;
+                                vertical-stretch: 1;
+
+                                VerticalBox {
+                                    spacing: 10px;
+
+                                    if root.planning_rows.length == 0 : Rectangle {
+                                        min-height: 160px;
+                                        border-radius: 16px;
+                                        border-width: 1px;
+                                        border-color: #dde4dd;
+                                        background: #fafbfa;
+                                        Text {
+                                            text: "Commence par creer des ouvriers pour afficher le planning.";
+                                            color: #7a8b80;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            width: parent.width;
+                                            height: parent.height;
+                                        }
+                                    }
+
+                                    HorizontalBox {
+                                        spacing: 8px;
+                                        Rectangle {
+                                            min-width: 260px;
+                                            preferred-width: 260px;
+                                            min-height: 52px;
+                                            border-radius: 14px;
+                                            border-width: 1px;
+                                            border-color: #d7dfd7;
+                                            background: #e9efe9;
+                                            Text { text: "Ouvriers"; color: #244136; horizontal-alignment: center; vertical-alignment: center; font-weight: 600; width: parent.width; height: parent.height; }
+                                        }
+
+                                        for header in root.day_headers : Rectangle {
+                                            min-width: 72px;
+                                            preferred-width: 72px;
+                                            min-height: 52px;
+                                            border-radius: 14px;
+                                            border-width: 1px;
+                                            border-color: #d7dfd7;
+                                            background: #e9efe9;
+                                            Text { text: header.label; color: #244136; horizontal-alignment: center; vertical-alignment: center; font-weight: 600; width: parent.width; height: parent.height; }
+                                        }
+                                    }
+
+                                    for row in root.planning_rows : HorizontalBox {
+                                        spacing: 8px;
+
+                                        Rectangle {
+                                            min-width: 260px;
+                                            preferred-width: 260px;
+                                            min-height: 58px;
+                                            border-radius: 14px;
+                                            border-width: 1px;
+                                            border-color: #dde4dd;
+                                            background: #fbfcfb;
+
+                                            VerticalBox {
+                                                padding: 10px;
+                                                spacing: 2px;
+                                                Text { text: row.worker_name; color: #1c3229; font-size: 14px; font-weight: 600; }
+                                                Text { text: row.job_role_label; color: #6c7e73; font-size: 11px; }
+                                            }
+                                        }
+
+                                        for cell in row.cells : PlanningCellView {
+                                            cell_data: cell;
+                                            worker_id: row.worker_id;
+                                            selected(worker_id, day) => { root.select_cell(worker_id, day); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        min-width: 360px;
+                        preferred-width: 360px;
+                        border-radius: 18px;
+                        border-width: 1px;
+                        border-color: #d7dfd7;
+                        background: #f3f6f3;
+
+                        VerticalBox {
+                            padding: 16px;
+                            spacing: 12px;
+
+                            Text { text: "Edition d'affectation"; color: #234035; font-size: 18px; font-weight: 600; }
+
+                            Rectangle {
+                                min-height: 84px;
+                                border-radius: 14px;
+                                border-width: 1px;
+                                border-color: #d5ddd6;
+                                background: #edf3ef;
+                                Text { text: root.assignment_summary; color: #2f4d40; wrap: word-wrap; x: 12px; y: 10px; width: parent.width - 24px; height: parent.height - 20px; font-size: 12px; }
+                            }
+
+                            Text { text: "Ouvrier"; color: #41594f; font-size: 12px; font-weight: 600; }
+                            assignment_worker_combo := ComboBox { model: root.assignment_worker_options; current-index <=> root.assignment_worker_index; }
+
+                            Text { text: "Jour selectionne"; color: #41594f; font-size: 12px; font-weight: 600; }
+                            Rectangle {
+                                min-height: 42px;
+                                border-radius: 12px;
+                                border-width: 1px;
+                                border-color: #dde4dd;
+                                background: #fbfcfb;
+                                Text {
+                                    text: root.assignment_day > 0 ? "Jour " + root.assignment_day + " / " + root.month_label(root.selected_month) + " " + root.selected_year : "Aucune case selectionnee";
+                                    color: #2b4439;
+                                    vertical-alignment: center;
+                                    x: 12px;
+                                    width: parent.width - 24px;
+                                    height: parent.height;
+                                    font-size: 12px;
+                                }
+                            }
+
+                            Text { text: "Horaire"; color: #41594f; font-size: 12px; font-weight: 600; }
+                            assignment_shift_combo := ComboBox { model: root.shift_options; current-index <=> root.assignment_shift_index; }
+
+                            Rectangle {
+                                min-height: 128px;
+                                border-radius: 14px;
+                                border-width: 1px;
+                                border-color: #e5ddca;
+                                background: #faf7ef;
+
+                                VerticalBox {
+                                    padding: 12px;
+                                    spacing: 6px;
+                                    Text { text: "Legende des equipes"; color: #54452d; font-size: 13px; font-weight: 600; }
+                                    Text { text: "Bleu : Nuit 21h00-05h00"; color: #5b7ea6; font-size: 12px; }
+                                    Text { text: "Rouge : Apres-midi 13h00-21h00"; color: #b5544c; font-size: 12px; }
+                                    Text { text: "Jaune : Matin 05h00-13h00"; color: #9f7b09; font-size: 12px; }
+                                    Text { text: "Beige : Journee 08h30-16h30"; color: #8c7350; font-size: 12px; }
+                                }
+                            }
+
+                            Rectangle { vertical-stretch: 1; background: transparent; }
+
+                            Button {
+                                text: "Enregistrer l'affectation";
+                                clicked => {
+                                    root.save_assignment(assignment_worker_combo.current-index, root.selected_year, root.selected_month, root.assignment_day, assignment_shift_combo.current-index);
+                                }
+                            }
+
+                            HorizontalBox {
+                                spacing: 8px;
+                                Button { text: "Reinitialiser"; clicked => { root.clear_assignment_form(); } }
+                                Button {
+                                    text: "Supprimer";
+                                    enabled: root.assignment_worker_index >= 0 && root.assignment_day > 0;
+                                    clicked => {
+                                        root.delete_assignment(assignment_worker_combo.current-index, root.selected_year, root.selected_month, root.assignment_day);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
