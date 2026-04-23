@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, btree_map::Entry};
 use std::rc::Rc;
 
 use crate::domain::{
-    Assignment, MonthlyPlanning, PlanningCell, PlanningDate, PlanningError, PlanningRow, Worker,
-    WorkerId,
+    Assignment, JobRole, MonthlyPlanning, PlanningCell, PlanningDate, PlanningError, PlanningRow,
+    ShiftKind, Worker, WorkerId,
 };
 use crate::error::AppError;
 use crate::infrastructure::SqliteDatabase;
@@ -33,7 +33,7 @@ impl PlanningGenerator {
                     let cell = PlanningCell::new(
                         assignment.date(),
                         assignment.shift_kind(),
-                        worker.job_role(),
+                        worker.job_role().clone(),
                     );
                     row.set_cell(assignment.date().day(), cell);
                 }
@@ -112,6 +112,27 @@ impl PlanningGenerator {
 }
 
 #[derive(Debug, Clone)]
+pub struct JobRoleService {
+    database: Rc<SqliteDatabase>,
+}
+
+impl JobRoleService {
+    pub fn new(database: Rc<SqliteDatabase>) -> Self {
+        Self { database }
+    }
+
+    pub fn list_all(&self) -> Result<Vec<JobRole>, AppError> {
+        self.database.list_job_roles()
+    }
+
+    pub fn save_role(&self, role_name: impl Into<String>) -> Result<JobRole, AppError> {
+        let role = JobRole::new(role_name)?;
+        self.database.upsert_job_role(&role)?;
+        Ok(role)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct WorkerService {
     database: Rc<SqliteDatabase>,
 }
@@ -127,11 +148,35 @@ impl WorkerService {
 
     pub fn save_worker(
         &self,
-        worker_id: impl Into<String>,
-        display_name: impl Into<String>,
-        job_role: crate::domain::JobRole,
+        worker_id: Option<String>,
+        last_name: impl Into<String>,
+        first_name: impl Into<String>,
+        job_role: JobRole,
     ) -> Result<Worker, AppError> {
-        let worker = Worker::new(WorkerId::new(worker_id.into())?, display_name, job_role)?;
+        let worker_id = match worker_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(existing_id) => WorkerId::new(existing_id)?,
+            None => self.database.generate_worker_id()?,
+        };
+
+        let worker = Worker::new(worker_id, last_name, first_name, job_role)?;
+
+        if let Some(existing_worker_id) = self
+            .database
+            .find_worker_id_by_identity(worker.last_name(), worker.first_name())?
+        {
+            if existing_worker_id != worker.id().clone() {
+                return Err(AppError::DuplicateWorkerIdentity {
+                    last_name: worker.last_name().to_owned(),
+                    first_name: worker.first_name().to_owned(),
+                });
+            }
+        }
+
+        self.database.upsert_job_role(worker.job_role())?;
         self.database.upsert_worker(&worker)?;
         Ok(worker)
     }
@@ -159,7 +204,7 @@ impl AssignmentService {
         &self,
         worker_id: &WorkerId,
         date: PlanningDate,
-        shift_kind: crate::domain::ShiftKind,
+        shift_kind: ShiftKind,
     ) -> Result<(), AppError> {
         self.database
             .upsert_assignment(&Assignment::new(worker_id.clone(), date, shift_kind))
@@ -216,12 +261,21 @@ impl LoadedMonthPlanning {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{JobRole, ShiftKind, ShiftStyleKey};
-    use crate::error::AppError;
+    use crate::domain::{ShiftStyleKey, WorkerId};
     use crate::infrastructure::SqliteDatabase;
 
-    fn build_worker(id: &str, name: &str, job_role: JobRole) -> Worker {
-        Worker::new(WorkerId::new(id).unwrap(), name, job_role).unwrap()
+    fn role(label: &str) -> JobRole {
+        JobRole::new(label).unwrap()
+    }
+
+    fn build_worker(id: &str, last_name: &str, first_name: &str, job_role: &str) -> Worker {
+        Worker::new(
+            WorkerId::new(id).unwrap(),
+            last_name,
+            first_name,
+            role(job_role),
+        )
+        .unwrap()
     }
 
     fn assignment(
@@ -241,8 +295,8 @@ mod tests {
     #[test]
     fn generator_builds_monthly_planning_grid() {
         let workers = vec![
-            build_worker("worker-01", "Alice Martin", JobRole::OperateurProduction),
-            build_worker("worker-02", "Bruno Leroy", JobRole::ChefDEquipes),
+            build_worker("worker-01", "Martin", "Alice", "Operateur de production"),
+            build_worker("worker-02", "Leroy", "Bruno", "Chef d'equipes"),
         ];
         let assignments = vec![
             assignment("worker-01", 2025, 1, 1, ShiftKind::Night),
@@ -259,8 +313,8 @@ mod tests {
         assert_eq!(planning.rows().len(), 2);
 
         let alice = planning.row_for_worker(workers[0].id()).unwrap();
-        assert_eq!(alice.worker_name(), "Alice Martin");
-        assert_eq!(alice.job_role(), JobRole::OperateurProduction);
+        assert_eq!(alice.worker_name(), "Martin Alice");
+        assert_eq!(alice.job_role().label(), "Operateur de production");
         assert_eq!(alice.cells().len(), 31);
         assert_eq!(
             alice.cell_for_day(1).unwrap().style_key(),
@@ -274,7 +328,7 @@ mod tests {
         );
 
         let bruno = planning.row_for_worker(workers[1].id()).unwrap();
-        assert_eq!(bruno.job_role(), JobRole::ChefDEquipes);
+        assert_eq!(bruno.job_role().label(), "Chef d'equipes");
         assert_eq!(bruno.cell_for_day(15).unwrap().shift_kind(), ShiftKind::Day);
         assert_eq!(
             bruno.cell_for_day(31).unwrap().style_key(),
@@ -286,8 +340,9 @@ mod tests {
     fn generator_supports_leap_day_assignments() {
         let workers = vec![build_worker(
             "worker-01",
-            "Alice Martin",
-            JobRole::OperateurSalleBlanche,
+            "Martin",
+            "Alice",
+            "Operateur de salle blanche",
         )];
         let assignments = vec![assignment("worker-01", 2024, 2, 29, ShiftKind::Night)];
 
@@ -302,8 +357,9 @@ mod tests {
     fn generator_rejects_unknown_worker() {
         let workers = vec![build_worker(
             "worker-01",
-            "Alice Martin",
-            JobRole::OperateurProduction,
+            "Martin",
+            "Alice",
+            "Operateur de production",
         )];
         let assignments = vec![assignment("ghost", 2025, 1, 4, ShiftKind::Morning)];
 
@@ -321,8 +377,9 @@ mod tests {
     fn generator_rejects_duplicate_assignment_same_day() {
         let workers = vec![build_worker(
             "worker-01",
-            "Alice Martin",
-            JobRole::OperateurProduction,
+            "Martin",
+            "Alice",
+            "Operateur de production",
         )];
         let assignments = vec![
             assignment("worker-01", 2025, 1, 4, ShiftKind::Morning),
@@ -344,8 +401,9 @@ mod tests {
     fn generator_rejects_assignment_outside_target_month() {
         let workers = vec![build_worker(
             "worker-01",
-            "Alice Martin",
-            JobRole::OperateurProduction,
+            "Martin",
+            "Alice",
+            "Operateur de production",
         )];
         let assignments = vec![assignment("worker-01", 2025, 2, 1, ShiftKind::Morning)];
 
@@ -364,8 +422,8 @@ mod tests {
     #[test]
     fn generator_rejects_duplicate_worker_ids() {
         let workers = vec![
-            build_worker("worker-01", "Alice Martin", JobRole::OperateurProduction),
-            build_worker("worker-01", "Alice Bis", JobRole::Autre),
+            build_worker("worker-01", "Martin", "Alice", "Operateur de production"),
+            build_worker("worker-01", "Martin", "Alice Bis", "Autre"),
         ];
 
         let error = PlanningGenerator::build_month(2025, 1, &workers, &[]).unwrap_err();
@@ -381,13 +439,15 @@ mod tests {
     #[test]
     fn services_create_and_reload_workers_and_assignments() {
         let database = Rc::new(SqliteDatabase::open_in_memory().unwrap());
+        let role_service = JobRoleService::new(database.clone());
         let worker_service = WorkerService::new(database.clone());
         let assignment_service = AssignmentService::new(database.clone());
         let planning_facade =
             PlanningFacade::new(worker_service.clone(), assignment_service.clone());
 
+        role_service.save_role("Chef de ligne").unwrap();
         let worker = worker_service
-            .save_worker("worker-01", "Alice Martin", JobRole::OperateurProduction)
+            .save_worker(None, "Martin", "Alice", role("Chef de ligne"))
             .unwrap();
         assignment_service
             .upsert_assignment(
@@ -401,6 +461,7 @@ mod tests {
 
         assert_eq!(loaded.workers().len(), 1);
         assert_eq!(loaded.planning().rows().len(), 1);
+        assert_eq!(loaded.workers()[0].job_role().label(), "Chef de ligne");
         assert_eq!(
             loaded
                 .planning()
@@ -414,12 +475,52 @@ mod tests {
     }
 
     #[test]
+    fn worker_service_generates_stable_internal_identifier_for_new_person() {
+        let database = Rc::new(SqliteDatabase::open_in_memory().unwrap());
+        let worker_service = WorkerService::new(database);
+
+        let worker = worker_service
+            .save_worker(None, "Martin", "Alice", role("Operateur de production"))
+            .unwrap();
+
+        assert!(worker.id().as_str().starts_with("worker-"));
+        assert_eq!(worker.display_name(), "Martin Alice");
+    }
+
+    #[test]
+    fn worker_service_rejects_duplicate_identity_on_create() {
+        let database = Rc::new(SqliteDatabase::open_in_memory().unwrap());
+        let worker_service = WorkerService::new(database);
+
+        worker_service
+            .save_worker(None, "Martin", "Alice", role("Operateur de production"))
+            .unwrap();
+
+        let error = worker_service
+            .save_worker(None, "Martin", "Alice", role("Chef d'equipes"))
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::DuplicateWorkerIdentity {
+                ref last_name,
+                ref first_name
+            } if last_name == "Martin" && first_name == "Alice"
+        ));
+    }
+
+    #[test]
     fn worker_service_propagates_delete_guard_when_assignments_exist() {
         let database = Rc::new(SqliteDatabase::open_in_memory().unwrap());
         let worker_service = WorkerService::new(database.clone());
         let assignment_service = AssignmentService::new(database);
         let worker = worker_service
-            .save_worker("worker-01", "Alice Martin", JobRole::OperateurProduction)
+            .save_worker(
+                Some("worker-01".to_owned()),
+                "Martin",
+                "Alice",
+                role("Operateur de production"),
+            )
             .unwrap();
         assignment_service
             .upsert_assignment(

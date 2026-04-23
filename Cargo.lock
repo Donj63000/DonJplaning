@@ -8,9 +8,12 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "directories",
+ "i-slint-backend-testing",
+ "raw-window-handle",
  "rusqlite",
  "slint",
  "slint-build",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1979,6 +1982,16 @@ dependencies = [
  "i-slint-core",
  "i-slint-core-macros",
  "i-slint-renderer-femtovg",
+]
+
+[[package]]
+name = "i-slint-backend-testing"
+version = "1.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06160d7126504d15969a6f286ac9de32e0de3cd62e4c9e7204c121dd332855b4"
+dependencies = [
+ "i-slint-core",
+ "vtable",
 ]
 
 [[package]]
@@ -4337,6 +4350,7 @@ dependencies = [
  "num-traits",
  "once_cell",
  "pin-weak",
+ "raw-window-handle",
  "slint-macros",
  "unicode-segmentation",
  "vtable",

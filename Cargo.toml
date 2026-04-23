@@ -10,8 +10,15 @@ name = "don_jplaning"
 [dependencies]
 chrono = "0.4.42"
 directories = "6.0.0"
+raw-window-handle = "0.6"
 rusqlite = { version = "0.38.0", features = ["bundled"] }
-slint = "1.15.1"
+slint = { version = "1.15.1", features = ["raw-window-handle-06"] }
 
 [build-dependencies]
 slint-build = "1.15.1"
+
+[dev-dependencies]
+i-slint-backend-testing = "1.15.1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_UI_WindowsAndMessaging"] }

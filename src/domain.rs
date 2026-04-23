@@ -4,7 +4,9 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanningError {
     EmptyWorkerId,
-    EmptyWorkerName,
+    EmptyWorkerLastName,
+    EmptyWorkerFirstName,
+    EmptyJobRole,
     InvalidMonth {
         month: u8,
     },
@@ -37,8 +39,15 @@ pub enum PlanningError {
 impl fmt::Display for PlanningError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyWorkerId => write!(f, "L'identifiant de l'ouvrier ne peut pas etre vide."),
-            Self::EmptyWorkerName => write!(f, "Le nom de l'ouvrier ne peut pas etre vide."),
+            Self::EmptyWorkerId => {
+                write!(
+                    f,
+                    "L'identifiant interne de la fiche ne peut pas etre vide."
+                )
+            }
+            Self::EmptyWorkerLastName => write!(f, "Le nom ne peut pas etre vide."),
+            Self::EmptyWorkerFirstName => write!(f, "Le prenom ne peut pas etre vide."),
+            Self::EmptyJobRole => write!(f, "Le poste ne peut pas etre vide."),
             Self::InvalidMonth { month } => {
                 write!(
                     f,
@@ -55,11 +64,11 @@ impl fmt::Display for PlanningError {
             ),
             Self::DuplicateWorkerId { worker_id } => write!(
                 f,
-                "L'identifiant d'ouvrier '{worker_id}' est duplique dans la base utilisateur."
+                "L'identifiant interne '{worker_id}' est duplique dans la base utilisateur."
             ),
             Self::UnknownWorker { worker_id } => write!(
                 f,
-                "L'ouvrier '{worker_id}' n'existe pas dans la base utilisateur du planning."
+                "La fiche '{worker_id}' n'existe pas dans la base utilisateur du planning."
             ),
             Self::AssignmentOutsideTargetMonth {
                 expected_year,
@@ -71,7 +80,7 @@ impl fmt::Display for PlanningError {
             ),
             Self::WorkerAlreadyAssignedOnDate { worker_id, date } => write!(
                 f,
-                "L'ouvrier '{worker_id}' possede deja une affectation sur la date {date}."
+                "La fiche '{worker_id}' possede deja une affectation sur la date {date}."
             ),
         }
     }
@@ -135,48 +144,63 @@ impl fmt::Display for WorkerId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum JobRole {
-    OperateurProduction,
-    OperateurSalleBlanche,
-    ChefDEquipes,
-    Autre,
-}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct JobRole(String);
 
 impl JobRole {
-    pub const ALL: [Self; 4] = [
-        Self::OperateurProduction,
-        Self::OperateurSalleBlanche,
-        Self::ChefDEquipes,
-        Self::Autre,
+    pub const DEFAULT_LABELS: [&'static str; 4] = [
+        "Operateur de production",
+        "Operateur de salle blanche",
+        "Chef d'equipes",
+        "Autre",
     ];
 
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::OperateurProduction => "Operateur de production",
-            Self::OperateurSalleBlanche => "Operateur de salle blanche",
-            Self::ChefDEquipes => "Chef d'equipes",
-            Self::Autre => "Autre",
+    pub fn new(value: impl Into<String>) -> Result<Self, PlanningError> {
+        let value = value.into();
+        let normalized = normalize_text(&value);
+
+        if normalized.is_empty() {
+            return Err(PlanningError::EmptyJobRole);
         }
+
+        Ok(Self(normalized))
     }
 
-    pub const fn storage_key(self) -> &'static str {
-        match self {
-            Self::OperateurProduction => "operateur_production",
-            Self::OperateurSalleBlanche => "operateur_salle_blanche",
-            Self::ChefDEquipes => "chef_d_equipes",
-            Self::Autre => "autre",
-        }
+    pub fn label(&self) -> &str {
+        &self.0
     }
 
-    pub fn from_storage_key(value: &str) -> Option<Self> {
-        match value {
-            "operateur_production" => Some(Self::OperateurProduction),
-            "operateur_salle_blanche" => Some(Self::OperateurSalleBlanche),
-            "chef_d_equipes" => Some(Self::ChefDEquipes),
-            "autre" => Some(Self::Autre),
-            _ => None,
+    pub fn default_roles() -> Vec<Self> {
+        Self::DEFAULT_LABELS
+            .iter()
+            .map(|label| Self::new(*label).expect("les postes par defaut sont valides"))
+            .collect()
+    }
+
+    pub fn from_legacy_storage_key(value: &str) -> Option<Self> {
+        let label = match value {
+            "operateur_production" => "Operateur de production",
+            "operateur_salle_blanche" => "Operateur de salle blanche",
+            "chef_d_equipes" => "Chef d'equipes",
+            "autre" => "Autre",
+            _ => return None,
+        };
+
+        Some(Self(label.to_owned()))
+    }
+
+    pub fn from_storage_value(value: &str) -> Result<Self, PlanningError> {
+        if let Some(role) = Self::from_legacy_storage_key(value) {
+            return Ok(role);
         }
+
+        Self::new(value)
+    }
+}
+
+impl fmt::Display for JobRole {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
     }
 }
 
@@ -367,6 +391,8 @@ impl fmt::Display for PlanningDate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Worker {
     id: WorkerId,
+    last_name: String,
+    first_name: String,
     display_name: String,
     job_role: JobRole,
 }
@@ -374,19 +400,26 @@ pub struct Worker {
 impl Worker {
     pub fn new(
         id: WorkerId,
-        display_name: impl Into<String>,
+        last_name: impl Into<String>,
+        first_name: impl Into<String>,
         job_role: JobRole,
     ) -> Result<Self, PlanningError> {
-        let display_name = display_name.into();
-        let normalized = display_name.trim();
+        let last_name = normalize_text(&last_name.into());
+        let first_name = normalize_text(&first_name.into());
 
-        if normalized.is_empty() {
-            return Err(PlanningError::EmptyWorkerName);
+        if last_name.is_empty() {
+            return Err(PlanningError::EmptyWorkerLastName);
+        }
+
+        if first_name.is_empty() {
+            return Err(PlanningError::EmptyWorkerFirstName);
         }
 
         Ok(Self {
             id,
-            display_name: normalized.to_owned(),
+            display_name: format!("{last_name} {first_name}"),
+            last_name,
+            first_name,
             job_role,
         })
     }
@@ -395,12 +428,20 @@ impl Worker {
         &self.id
     }
 
+    pub fn last_name(&self) -> &str {
+        &self.last_name
+    }
+
+    pub fn first_name(&self) -> &str {
+        &self.first_name
+    }
+
     pub fn display_name(&self) -> &str {
         &self.display_name
     }
 
-    pub const fn job_role(&self) -> JobRole {
-        self.job_role
+    pub fn job_role(&self) -> &JobRole {
+        &self.job_role
     }
 }
 
@@ -457,8 +498,8 @@ impl PlanningCell {
         self.shift_kind
     }
 
-    pub const fn job_role(&self) -> JobRole {
-        self.job_role
+    pub fn job_role(&self) -> &JobRole {
+        &self.job_role
     }
 
     pub const fn shift_label(&self) -> &'static str {
@@ -483,7 +524,7 @@ impl PlanningRow {
         Self {
             worker_id: worker.id().clone(),
             worker_name: worker.display_name().to_owned(),
-            job_role: worker.job_role(),
+            job_role: worker.job_role().clone(),
             cells: vec![None; total_days as usize],
         }
     }
@@ -501,8 +542,8 @@ impl PlanningRow {
         &self.worker_name
     }
 
-    pub const fn job_role(&self) -> JobRole {
-        self.job_role
+    pub fn job_role(&self) -> &JobRole {
+        &self.job_role
     }
 
     pub fn cells(&self) -> &[Option<PlanningCell>] {
@@ -559,25 +600,30 @@ impl MonthlyPlanning {
     }
 }
 
+fn normalize_text(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn job_role_labels_are_stable() {
+    fn job_role_supports_default_roles_and_legacy_keys() {
+        let defaults = JobRole::default_roles();
+
+        assert_eq!(defaults.len(), 4);
+        assert_eq!(defaults[0].label(), "Operateur de production");
+        assert_eq!(defaults[2].label(), "Chef d'equipes");
         assert_eq!(
-            JobRole::OperateurProduction.label(),
-            "Operateur de production"
+            JobRole::from_legacy_storage_key("chef_d_equipes")
+                .unwrap()
+                .label(),
+            "Chef d'equipes"
         );
         assert_eq!(
-            JobRole::OperateurSalleBlanche.label(),
-            "Operateur de salle blanche"
-        );
-        assert_eq!(JobRole::ChefDEquipes.label(), "Chef d'equipes");
-        assert_eq!(JobRole::Autre.label(), "Autre");
-        assert_eq!(
-            JobRole::from_storage_key(JobRole::ChefDEquipes.storage_key()),
-            Some(JobRole::ChefDEquipes)
+            JobRole::new("  Chef   d'equipes  ").unwrap().label(),
+            "Chef d'equipes"
         );
     }
 
@@ -626,17 +672,33 @@ mod tests {
     }
 
     #[test]
-    fn worker_requires_non_empty_identifiers_and_name() {
+    fn worker_requires_non_empty_identifiers_names_and_role() {
         assert!(matches!(
             WorkerId::new("   "),
             Err(PlanningError::EmptyWorkerId)
         ));
 
         let worker_id = WorkerId::new("worker-01").unwrap();
+        let job_role = JobRole::new("Autre").unwrap();
+
         assert!(matches!(
-            Worker::new(worker_id, "   ", JobRole::Autre),
-            Err(PlanningError::EmptyWorkerName)
+            Worker::new(worker_id.clone(), "   ", "Alice", job_role.clone()),
+            Err(PlanningError::EmptyWorkerLastName)
         ));
+        assert!(matches!(
+            Worker::new(worker_id.clone(), "Martin", "   ", job_role.clone()),
+            Err(PlanningError::EmptyWorkerFirstName)
+        ));
+        assert!(matches!(
+            JobRole::new("   "),
+            Err(PlanningError::EmptyJobRole)
+        ));
+        assert_eq!(
+            Worker::new(worker_id, "  Martin  ", "  Alice  ", job_role)
+                .unwrap()
+                .display_name(),
+            "Martin Alice"
+        );
     }
 
     #[test]

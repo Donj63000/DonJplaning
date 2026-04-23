@@ -14,8 +14,18 @@ pub enum AppError {
     InvalidMonthInput(i32),
     InvalidDayInput(i32),
     MissingWorkerSelection,
+    MissingAssignmentSelection,
     MissingShiftSelection,
-    WorkerHasAssignments { worker_id: String },
+    MissingJobRoleSelection,
+    WorkerHasAssignments {
+        worker_id: String,
+    },
+    DuplicateWorkerIdentity {
+        last_name: String,
+        first_name: String,
+    },
+    UnsupportedDatabaseSchema,
+    UiEventLoop(slint::EventLoopError),
     UiPlatform(slint::PlatformError),
 }
 
@@ -30,7 +40,7 @@ impl fmt::Display for AppError {
                 "Impossible de determiner le dossier local de l'application sur cette machine."
             ),
             Self::InvalidJobRole(value) => {
-                write!(f, "Le poste '{value}' n'est pas reconnu par le logiciel.")
+                write!(f, "Le poste '{value}' n'est pas valide.")
             }
             Self::InvalidShiftKind(value) => {
                 write!(f, "L'horaire '{value}' n'est pas reconnu par le logiciel.")
@@ -47,18 +57,34 @@ impl fmt::Display for AppError {
                     "Le jour '{value}' est invalide pour le mois selectionne."
                 )
             }
-            Self::MissingWorkerSelection => write!(
-                f,
-                "Je dois selectionner un ouvrier avant d'enregistrer une affectation."
-            ),
-            Self::MissingShiftSelection => write!(
-                f,
-                "Je dois selectionner un horaire avant d'enregistrer une affectation."
-            ),
+            Self::MissingWorkerSelection => {
+                write!(f, "Je dois selectionner une fiche avant de continuer.")
+            }
+            Self::MissingAssignmentSelection => {
+                write!(
+                    f,
+                    "Je dois selectionner une affectation existante avant de continuer."
+                )
+            }
+            Self::MissingShiftSelection => {
+                write!(f, "Je dois selectionner un horaire.")
+            }
+            Self::MissingJobRoleSelection => {
+                write!(f, "Je dois selectionner un poste.")
+            }
             Self::WorkerHasAssignments { worker_id } => write!(
                 f,
-                "Je ne peux pas supprimer l'ouvrier '{worker_id}' tant qu'il possede des affectations."
+                "Je ne peux pas supprimer la fiche '{worker_id}' tant qu'elle possede des affectations."
             ),
+            Self::DuplicateWorkerIdentity {
+                last_name,
+                first_name,
+            } => write!(f, "Une fiche existe deja pour {last_name} {first_name}."),
+            Self::UnsupportedDatabaseSchema => write!(
+                f,
+                "La base locale n'est pas compatible avec cette version du logiciel."
+            ),
+            Self::UiEventLoop(error) => write!(f, "Erreur de boucle d'evenements UI: {error}"),
             Self::UiPlatform(error) => write!(f, "Erreur de plateforme UI: {error}"),
         }
     }
@@ -70,6 +96,7 @@ impl Error for AppError {
             Self::Planning(error) => Some(error),
             Self::Database(error) => Some(error),
             Self::Io(error) => Some(error),
+            Self::UiEventLoop(error) => Some(error),
             Self::UiPlatform(error) => Some(error),
             Self::DirectoriesUnavailable
             | Self::InvalidJobRole(_)
@@ -77,8 +104,12 @@ impl Error for AppError {
             | Self::InvalidMonthInput(_)
             | Self::InvalidDayInput(_)
             | Self::MissingWorkerSelection
+            | Self::MissingAssignmentSelection
             | Self::MissingShiftSelection
-            | Self::WorkerHasAssignments { .. } => None,
+            | Self::MissingJobRoleSelection
+            | Self::WorkerHasAssignments { .. }
+            | Self::DuplicateWorkerIdentity { .. }
+            | Self::UnsupportedDatabaseSchema => None,
         }
     }
 }
@@ -104,5 +135,11 @@ impl From<std::io::Error> for AppError {
 impl From<slint::PlatformError> for AppError {
     fn from(value: slint::PlatformError) -> Self {
         Self::UiPlatform(value)
+    }
+}
+
+impl From<slint::EventLoopError> for AppError {
+    fn from(value: slint::EventLoopError) -> Self {
+        Self::UiEventLoop(value)
     }
 }

@@ -5,7 +5,8 @@ pub mod infrastructure;
 pub mod ui;
 
 pub use application::{
-    AssignmentService, LoadedMonthPlanning, PlanningFacade, PlanningGenerator, WorkerService,
+    AssignmentService, JobRoleService, LoadedMonthPlanning, PlanningFacade, PlanningGenerator,
+    WorkerService,
 };
 pub use domain::{
     Assignment, ClockTime, JobRole, MonthlyPlanning, PlanningCell, PlanningDate, PlanningError,

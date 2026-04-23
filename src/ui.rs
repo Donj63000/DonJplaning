@@ -2,10 +2,11 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use chrono::{Datelike, Local};
+use chrono::{Datelike, Local, NaiveDate, Weekday};
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
-use crate::application::{AssignmentService, PlanningFacade, WorkerService};
+use crate::application::{AssignmentService, JobRoleService, PlanningFacade, WorkerService};
 use crate::domain::{
     JobRole, MonthlyPlanning, PlanningDate, PlanningRow, ShiftKind, Worker, WorkerId,
 };
@@ -14,12 +15,24 @@ use crate::infrastructure::SqliteDatabase;
 
 slint::include_modules!();
 
+trait StartupWindowControl {
+    fn request_maximized(&self);
+}
+
+impl StartupWindowControl for AppWindow {
+    fn request_maximized(&self) {
+        self.window().set_maximized(true);
+    }
+}
+
 pub fn run() -> Result<(), AppError> {
     let database = Rc::new(SqliteDatabase::open_or_create_default()?);
+    let job_role_service = JobRoleService::new(database.clone());
     let worker_service = WorkerService::new(database.clone());
     let assignment_service = AssignmentService::new(database.clone());
     let planning_facade = PlanningFacade::new(worker_service.clone(), assignment_service.clone());
     let controller = Rc::new(RefCell::new(AppController::new(
+        job_role_service,
         worker_service,
         assignment_service,
         planning_facade,
@@ -29,24 +42,65 @@ pub fn run() -> Result<(), AppError> {
     let ui = AppWindow::new()?;
     attach_callbacks(&ui, controller.clone());
     controller.borrow_mut().initialize(&ui)?;
+    schedule_startup_window(&ui)?;
     ui.run()?;
     Ok(())
 }
 
+fn configure_startup_window(window: &impl StartupWindowControl) {
+    window.request_maximized();
+}
+
+fn schedule_startup_window(ui: &AppWindow) -> Result<(), AppError> {
+    let weak = ui.as_weak();
+
+    slint::invoke_from_event_loop(move || {
+        if let Some(ui) = weak.upgrade() {
+            configure_startup_window(&ui);
+            apply_native_startup_window(&ui);
+        }
+    })?;
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn apply_native_startup_window(ui: &AppWindow) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SW_MAXIMIZE, ShowWindow};
+
+    let native_window = ui.window().window_handle();
+    let Ok(window_handle) = native_window.window_handle() else {
+        return;
+    };
+
+    if let RawWindowHandle::Win32(handle) = window_handle.as_raw() {
+        // Ici je demande aussi a Windows de maximiser la vraie fenetre native.
+        unsafe {
+            ShowWindow(handle.hwnd.get() as _, SW_MAXIMIZE);
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_native_startup_window(_ui: &AppWindow) {}
+
 #[derive(Debug)]
 struct AppController {
+    job_role_service: JobRoleService,
     worker_service: WorkerService,
     assignment_service: AssignmentService,
     planning_facade: PlanningFacade,
     current_year: i32,
     current_month: u8,
     current_workers: Vec<Worker>,
+    current_job_roles: Vec<JobRole>,
     current_planning: Option<MonthlyPlanning>,
     database_path_hint: Option<PathBuf>,
 }
 
 impl AppController {
     fn new(
+        job_role_service: JobRoleService,
         worker_service: WorkerService,
         assignment_service: AssignmentService,
         planning_facade: PlanningFacade,
@@ -55,24 +109,20 @@ impl AppController {
         let today = Local::now().date_naive();
 
         Self {
+            job_role_service,
             worker_service,
             assignment_service,
             planning_facade,
             current_year: today.year(),
             current_month: today.month() as u8,
             current_workers: Vec::new(),
+            current_job_roles: Vec::new(),
             current_planning: None,
             database_path_hint,
         }
     }
 
     fn initialize(&mut self, ui: &AppWindow) -> Result<(), AppError> {
-        ui.set_role_options(model_from_vec(
-            JobRole::ALL
-                .iter()
-                .map(|role| SharedString::from(role.label()))
-                .collect(),
-        ));
         ui.set_shift_options(model_from_vec(
             ShiftKind::ALL
                 .iter()
@@ -81,9 +131,10 @@ impl AppController {
         ));
         ui.set_current_page(0);
         ui.set_status_message(SharedString::new());
-        ui.set_assignment_summary(
-            "Selectionnez une case du planning pour preparer une affectation.".into(),
-        );
+        ui.set_assignment_summary(SharedString::new());
+        ui.set_worker_delete_confirmation_pending(false);
+        ui.set_assignment_delete_confirmation_pending(false);
+        ui.set_assignment_existing(false);
         ui.set_db_path_hint(
             self.database_path_hint
                 .as_ref()
@@ -91,9 +142,9 @@ impl AppController {
                 .unwrap_or_else(|| "Base locale".to_owned())
                 .into(),
         );
+        self.refresh_ui(ui)?;
         self.clear_worker_form(ui);
         self.clear_assignment_form(ui);
-        self.refresh_ui(ui)?;
         Ok(())
     }
 
@@ -103,29 +154,56 @@ impl AppController {
             .load_month(self.current_year, self.current_month)?;
         let workers = loaded.workers().to_vec();
         let planning = loaded.planning().clone();
+        let job_roles = self.job_role_service.list_all()?;
 
+        ui.set_role_options(model_from_vec(
+            job_roles
+                .iter()
+                .map(|role| SharedString::from(role.label()))
+                .collect(),
+        ));
         ui.set_worker_rows(model_from_vec(build_worker_rows(&workers)));
         ui.set_assignment_worker_options(model_from_vec(build_assignment_worker_options(&workers)));
-        ui.set_day_headers(model_from_vec(build_day_headers(planning.total_days())));
+        ui.set_day_headers(model_from_vec(build_day_headers(
+            self.current_year,
+            self.current_month,
+            planning.total_days(),
+        )));
         ui.set_planning_rows(model_from_vec(build_planning_rows(&planning)));
         ui.set_total_days(planning.total_days() as i32);
         ui.set_selected_year(self.current_year);
         ui.set_selected_month(self.current_month as i32);
+        self.clear_worker_delete_confirmation(ui);
+        self.clear_assignment_delete_confirmation(ui);
 
         if ui.get_assignment_worker_index() >= workers.len() as i32 {
             ui.set_assignment_worker_index(-1);
+            ui.set_assignment_existing(false);
+        }
+
+        let default_role_index = if job_roles.is_empty() { -1 } else { 0 };
+
+        if ui.get_worker_form_role_index() < 0
+            || ui.get_worker_form_role_index() >= job_roles.len() as i32
+        {
+            ui.set_worker_form_role_index(default_role_index);
         }
 
         self.current_workers = workers;
+        self.current_job_roles = job_roles;
         self.current_planning = Some(planning);
         Ok(())
     }
 
     fn clear_worker_form(&self, ui: &AppWindow) {
         ui.set_worker_form_id(SharedString::new());
-        ui.set_worker_form_name(SharedString::new());
-        ui.set_worker_form_role_index(0);
+        ui.set_worker_form_last_name(SharedString::new());
+        ui.set_worker_form_first_name(SharedString::new());
+        ui.set_new_role_name(SharedString::new());
+        ui.set_worker_form_role_index(self.default_role_index());
         ui.set_worker_form_existing(false);
+        self.clear_worker_delete_confirmation(ui);
+        self.clear_status(ui);
     }
 
     fn select_worker(&self, ui: &AppWindow, worker_id: &str) {
@@ -136,10 +214,13 @@ impl AppController {
         {
             ui.set_current_page(0);
             ui.set_worker_form_id(worker.id().to_string().into());
-            ui.set_worker_form_name(worker.display_name().into());
-            ui.set_worker_form_role_index(job_role_to_index(worker.job_role()));
+            ui.set_worker_form_last_name(worker.last_name().into());
+            ui.set_worker_form_first_name(worker.first_name().into());
+            ui.set_worker_form_role_index(self.job_role_to_index(worker.job_role()));
             ui.set_worker_form_existing(true);
-            self.show_success(ui, "Ouvrier charge dans le formulaire.");
+            ui.set_new_role_name(SharedString::new());
+            self.clear_worker_delete_confirmation(ui);
+            self.clear_status(ui);
         }
     }
 
@@ -147,28 +228,41 @@ impl AppController {
         &mut self,
         ui: &AppWindow,
         worker_id: SharedString,
-        display_name: SharedString,
+        last_name: SharedString,
+        first_name: SharedString,
         role_index: i32,
     ) -> Result<(), AppError> {
-        let job_role = role_from_index(role_index)?;
+        let job_role = self.job_role_from_index(role_index)?;
         let worker = self.worker_service.save_worker(
-            worker_id.to_string(),
-            display_name.to_string(),
+            non_empty_shared_string(&worker_id),
+            last_name.to_string(),
+            first_name.to_string(),
             job_role,
         )?;
 
         self.refresh_ui(ui)?;
         self.select_worker(ui, worker.id().as_str());
-        self.show_success(ui, "Ouvrier enregistre avec succes.");
+        self.show_success(ui, "Fiche enregistree.");
+        Ok(())
+    }
+
+    fn add_job_role(&mut self, ui: &AppWindow, role_name: SharedString) -> Result<(), AppError> {
+        let role = self.job_role_service.save_role(role_name.to_string())?;
+
+        self.refresh_ui(ui)?;
+        ui.set_new_role_name(SharedString::new());
+        ui.set_worker_form_role_index(self.job_role_to_index(&role));
+        self.show_success(ui, "Poste ajoute.");
         Ok(())
     }
 
     fn delete_worker(&mut self, ui: &AppWindow, worker_id: SharedString) -> Result<(), AppError> {
+        self.clear_worker_delete_confirmation(ui);
         let worker_id = WorkerId::new(worker_id.to_string())?;
         self.worker_service.delete_worker(&worker_id)?;
         self.refresh_ui(ui)?;
         self.clear_worker_form(ui);
-        self.show_success(ui, "Ouvrier supprime.");
+        self.show_success(ui, "Fiche supprimee.");
         Ok(())
     }
 
@@ -176,9 +270,10 @@ impl AppController {
         ui.set_assignment_worker_index(-1);
         ui.set_assignment_shift_index(-1);
         ui.set_assignment_day(0);
-        ui.set_assignment_summary(
-            "Selectionnez une case du planning pour preparer une affectation.".into(),
-        );
+        ui.set_assignment_summary(SharedString::new());
+        ui.set_assignment_existing(false);
+        self.clear_assignment_delete_confirmation(ui);
+        self.clear_status(ui);
     }
 
     fn select_cell(&self, ui: &AppWindow, worker_id: &str, day: i32) -> Result<(), AppError> {
@@ -193,12 +288,14 @@ impl AppController {
         ui.set_current_page(1);
         ui.set_assignment_worker_index(worker_index);
         ui.set_assignment_day(day);
+        self.clear_assignment_delete_confirmation(ui);
 
         if let Some(planning) = &self.current_planning {
             if let Some(cell) = planning
                 .row_for_worker(worker.id())
                 .and_then(|row| row.cell_for_day(date.day()))
             {
+                ui.set_assignment_existing(true);
                 ui.set_assignment_shift_index(shift_to_index(cell.shift_kind()));
                 ui.set_assignment_summary(
                     format!(
@@ -212,14 +309,16 @@ impl AppController {
                     )
                     .into(),
                 );
+                self.clear_status(ui);
                 return Ok(());
             }
         }
 
+        ui.set_assignment_existing(false);
         ui.set_assignment_shift_index(-1);
         ui.set_assignment_summary(
             format!(
-                "{} - {:02}/{:02}/{:04} - Case libre",
+                "{} - {:02}/{:02}/{:04} - Libre",
                 worker.display_name(),
                 date.day(),
                 date.month(),
@@ -227,6 +326,49 @@ impl AppController {
             )
             .into(),
         );
+        self.clear_status(ui);
+        Ok(())
+    }
+
+    fn update_assignment_worker(&self, ui: &AppWindow, worker_index: i32) -> Result<(), AppError> {
+        ui.set_assignment_worker_index(worker_index);
+        self.clear_assignment_delete_confirmation(ui);
+
+        if worker_index < 0 {
+            ui.set_assignment_existing(false);
+            ui.set_assignment_shift_index(-1);
+            ui.set_assignment_summary(SharedString::new());
+            self.clear_status(ui);
+            return Ok(());
+        }
+
+        if ui.get_assignment_day() > 0 {
+            let worker_id = self.worker_id_from_index(worker_index)?.clone();
+            self.select_cell(ui, worker_id.as_str(), ui.get_assignment_day())?;
+            return Ok(());
+        }
+
+        ui.set_assignment_existing(false);
+        ui.set_assignment_shift_index(-1);
+        ui.set_assignment_summary(SharedString::new());
+        self.clear_status(ui);
+        Ok(())
+    }
+
+    fn update_assignment_shift(&self, ui: &AppWindow, shift_index: i32) -> Result<(), AppError> {
+        ui.set_assignment_shift_index(shift_index);
+        self.clear_assignment_delete_confirmation(ui);
+
+        if ui.get_assignment_worker_index() < 0 || ui.get_assignment_day() <= 0 {
+            if shift_index < 0 {
+                ui.set_assignment_summary(SharedString::new());
+            }
+            self.clear_status(ui);
+            return Ok(());
+        }
+
+        self.refresh_assignment_summary(ui)?;
+        self.clear_status(ui);
         Ok(())
     }
 
@@ -243,6 +385,7 @@ impl AppController {
         let date = PlanningDate::new(year, to_month(month)?, to_day(day)?)?;
         let shift_kind = shift_from_index(shift_index)?;
 
+        self.clear_assignment_delete_confirmation(ui);
         self.assignment_service
             .upsert_assignment(&worker_id, date, shift_kind)?;
         self.refresh_ui(ui)?;
@@ -259,6 +402,10 @@ impl AppController {
         month: i32,
         day: i32,
     ) -> Result<(), AppError> {
+        self.clear_assignment_delete_confirmation(ui);
+        if !ui.get_assignment_existing() {
+            return Err(AppError::MissingAssignmentSelection);
+        }
         let worker_id = self.worker_id_from_index(worker_index)?.clone();
         let date = PlanningDate::new(year, to_month(month)?, to_day(day)?)?;
 
@@ -280,7 +427,7 @@ impl AppController {
 
         self.refresh_ui(ui)?;
         self.clear_assignment_form(ui);
-        self.show_success(ui, "Mois precedent charge.");
+        self.clear_status(ui);
         Ok(())
     }
 
@@ -294,7 +441,7 @@ impl AppController {
 
         self.refresh_ui(ui)?;
         self.clear_assignment_form(ui);
-        self.show_success(ui, "Mois suivant charge.");
+        self.clear_status(ui);
         Ok(())
     }
 
@@ -303,7 +450,7 @@ impl AppController {
         self.current_month = to_month(month)?;
         self.refresh_ui(ui)?;
         self.clear_assignment_form(ui);
-        self.show_success(ui, "Planning recharge.");
+        self.clear_status(ui);
         Ok(())
     }
 
@@ -316,6 +463,129 @@ impl AppController {
             .get(worker_index as usize)
             .map(|worker| worker.id())
             .ok_or(AppError::MissingWorkerSelection)
+    }
+
+    fn job_role_from_index(&self, role_index: i32) -> Result<JobRole, AppError> {
+        if role_index < 0 {
+            return Err(AppError::MissingJobRoleSelection);
+        }
+
+        self.current_job_roles
+            .get(role_index as usize)
+            .cloned()
+            .ok_or(AppError::MissingJobRoleSelection)
+    }
+
+    fn job_role_to_index(&self, role: &JobRole) -> i32 {
+        self.current_job_roles
+            .iter()
+            .position(|candidate| candidate == role)
+            .map(|index| index as i32)
+            .unwrap_or(self.default_role_index())
+    }
+
+    fn default_role_index(&self) -> i32 {
+        if self.current_job_roles.is_empty() {
+            -1
+        } else {
+            0
+        }
+    }
+
+    fn request_worker_delete_confirmation(&self, ui: &AppWindow) -> Result<(), AppError> {
+        if !ui.get_worker_form_existing() || ui.get_worker_form_id().is_empty() {
+            return Err(AppError::MissingWorkerSelection);
+        }
+
+        ui.set_worker_delete_confirmation_pending(true);
+        self.clear_status(ui);
+        Ok(())
+    }
+
+    fn cancel_worker_delete_confirmation(&self, ui: &AppWindow) {
+        self.clear_worker_delete_confirmation(ui);
+        self.clear_status(ui);
+    }
+
+    fn clear_worker_delete_confirmation(&self, ui: &AppWindow) {
+        ui.set_worker_delete_confirmation_pending(false);
+    }
+
+    fn request_assignment_delete_confirmation(&self, ui: &AppWindow) -> Result<(), AppError> {
+        if ui.get_assignment_worker_index() < 0 {
+            return Err(AppError::MissingWorkerSelection);
+        }
+
+        if ui.get_assignment_day() <= 0 {
+            return Err(AppError::InvalidDayInput(ui.get_assignment_day()));
+        }
+
+        if !ui.get_assignment_existing() {
+            return Err(AppError::MissingAssignmentSelection);
+        }
+
+        ui.set_assignment_delete_confirmation_pending(true);
+        self.clear_status(ui);
+        Ok(())
+    }
+
+    fn cancel_assignment_delete_confirmation(&self, ui: &AppWindow) {
+        self.clear_assignment_delete_confirmation(ui);
+        self.clear_status(ui);
+    }
+
+    fn clear_assignment_delete_confirmation(&self, ui: &AppWindow) {
+        ui.set_assignment_delete_confirmation_pending(false);
+    }
+
+    fn refresh_assignment_summary(&self, ui: &AppWindow) -> Result<(), AppError> {
+        let worker_index = ui.get_assignment_worker_index();
+        let day = ui.get_assignment_day();
+
+        if worker_index < 0 || day <= 0 {
+            ui.set_assignment_summary(SharedString::new());
+            return Ok(());
+        }
+
+        let worker = self
+            .current_workers
+            .get(worker_index as usize)
+            .ok_or(AppError::MissingWorkerSelection)?;
+        let date = PlanningDate::new(self.current_year, self.current_month, to_day(day)?)?;
+        let base = format!(
+            "{} - {:02}/{:02}/{:04}",
+            worker.display_name(),
+            date.day(),
+            date.month(),
+            date.year()
+        );
+
+        let summary = if ui.get_assignment_shift_index() >= 0 {
+            let shift_kind = shift_from_index(ui.get_assignment_shift_index())?;
+
+            if ui.get_assignment_existing() {
+                format!(
+                    "{base} - Edition {} {}",
+                    shift_kind.label(),
+                    shift_kind.time_range_label()
+                )
+            } else {
+                format!(
+                    "{base} - Preparation {} {}",
+                    shift_kind.label(),
+                    shift_kind.time_range_label()
+                )
+            }
+        } else {
+            format!("{base} - Libre")
+        };
+
+        ui.set_assignment_summary(summary.into());
+        Ok(())
+    }
+
+    fn clear_status(&self, ui: &AppWindow) {
+        ui.set_status_message(SharedString::new());
     }
 
     fn show_error(&self, ui: &AppWindow, error: AppError) {
@@ -348,16 +618,52 @@ fn attach_callbacks(ui: &AppWindow, controller: Rc<RefCell<AppController>>) {
 
     let weak = ui.as_weak();
     let controller_save_worker = controller.clone();
-    ui.on_save_worker(move |worker_id, display_name, role_index| {
+    ui.on_save_worker(move |worker_id, last_name, first_name, role_index| {
         if let Some(ui) = weak.upgrade() {
-            if let Err(error) = controller_save_worker.borrow_mut().save_worker(
-                &ui,
-                worker_id,
-                display_name,
-                role_index,
-            ) {
+            if let Err(error) = controller_save_worker
+                .borrow_mut()
+                .save_worker(&ui, worker_id, last_name, first_name, role_index)
+            {
                 controller_save_worker.borrow().show_error(&ui, error);
             }
+        }
+    });
+
+    let weak = ui.as_weak();
+    let controller_add_job_role = controller.clone();
+    ui.on_add_job_role(move |role_name| {
+        if let Some(ui) = weak.upgrade() {
+            if let Err(error) = controller_add_job_role
+                .borrow_mut()
+                .add_job_role(&ui, role_name)
+            {
+                controller_add_job_role.borrow().show_error(&ui, error);
+            }
+        }
+    });
+
+    let weak = ui.as_weak();
+    let controller_request_worker_delete = controller.clone();
+    ui.on_request_worker_delete_confirmation(move || {
+        if let Some(ui) = weak.upgrade() {
+            if let Err(error) = controller_request_worker_delete
+                .borrow()
+                .request_worker_delete_confirmation(&ui)
+            {
+                controller_request_worker_delete
+                    .borrow()
+                    .show_error(&ui, error);
+            }
+        }
+    });
+
+    let weak = ui.as_weak();
+    let controller_cancel_worker_delete = controller.clone();
+    ui.on_cancel_worker_delete_confirmation(move || {
+        if let Some(ui) = weak.upgrade() {
+            controller_cancel_worker_delete
+                .borrow()
+                .cancel_worker_delete_confirmation(&ui);
         }
     });
 
@@ -432,6 +738,61 @@ fn attach_callbacks(ui: &AppWindow, controller: Rc<RefCell<AppController>>) {
     });
 
     let weak = ui.as_weak();
+    let controller_assignment_worker_changed = controller.clone();
+    ui.on_assignment_worker_changed(move |worker_index| {
+        if let Some(ui) = weak.upgrade() {
+            if let Err(error) = controller_assignment_worker_changed
+                .borrow()
+                .update_assignment_worker(&ui, worker_index)
+            {
+                controller_assignment_worker_changed
+                    .borrow()
+                    .show_error(&ui, error);
+            }
+        }
+    });
+
+    let weak = ui.as_weak();
+    let controller_assignment_shift_changed = controller.clone();
+    ui.on_assignment_shift_changed(move |shift_index| {
+        if let Some(ui) = weak.upgrade() {
+            if let Err(error) = controller_assignment_shift_changed
+                .borrow()
+                .update_assignment_shift(&ui, shift_index)
+            {
+                controller_assignment_shift_changed
+                    .borrow()
+                    .show_error(&ui, error);
+            }
+        }
+    });
+
+    let weak = ui.as_weak();
+    let controller_request_assignment_delete = controller.clone();
+    ui.on_request_assignment_delete_confirmation(move || {
+        if let Some(ui) = weak.upgrade() {
+            if let Err(error) = controller_request_assignment_delete
+                .borrow()
+                .request_assignment_delete_confirmation(&ui)
+            {
+                controller_request_assignment_delete
+                    .borrow()
+                    .show_error(&ui, error);
+            }
+        }
+    });
+
+    let weak = ui.as_weak();
+    let controller_cancel_assignment_delete = controller.clone();
+    ui.on_cancel_assignment_delete_confirmation(move || {
+        if let Some(ui) = weak.upgrade() {
+            controller_cancel_assignment_delete
+                .borrow()
+                .cancel_assignment_delete_confirmation(&ui);
+        }
+    });
+
+    let weak = ui.as_weak();
     let controller_save_assignment = controller.clone();
     ui.on_save_assignment(move |worker_index, year, month, day, shift_index| {
         if let Some(ui) = weak.upgrade() {
@@ -471,7 +832,8 @@ fn build_worker_rows(workers: &[Worker]) -> Vec<WorkerRowData> {
         .iter()
         .map(|worker| WorkerRowData {
             id: worker.id().to_string().into(),
-            display_name: worker.display_name().into(),
+            last_name: worker.last_name().into(),
+            first_name: worker.first_name().into(),
             job_role_label: worker.job_role().label().into(),
         })
         .collect()
@@ -484,13 +846,35 @@ fn build_assignment_worker_options(workers: &[Worker]) -> Vec<SharedString> {
         .collect()
 }
 
-fn build_day_headers(total_days: u8) -> Vec<DayHeaderData> {
+fn build_day_headers(year: i32, month: u8, total_days: u8) -> Vec<DayHeaderData> {
     (1..=total_days)
         .map(|day| DayHeaderData {
             day: day as i32,
             label: day.to_string().into(),
+            weekday_label: weekday_label_from_date(year, month, day).into(),
+            is_weekend: is_weekend_date(year, month, day),
         })
         .collect()
+}
+
+fn weekday_label_from_date(year: i32, month: u8, day: u8) -> &'static str {
+    NaiveDate::from_ymd_opt(year, month as u32, day as u32)
+        .map(|date| match date.weekday() {
+            Weekday::Mon => "Lu",
+            Weekday::Tue => "Ma",
+            Weekday::Wed => "Me",
+            Weekday::Thu => "Je",
+            Weekday::Fri => "Ve",
+            Weekday::Sat => "Sa",
+            Weekday::Sun => "Di",
+        })
+        .unwrap_or("")
+}
+
+fn is_weekend_date(year: i32, month: u8, day: u8) -> bool {
+    NaiveDate::from_ymd_opt(year, month as u32, day as u32)
+        .map(|date| matches!(date.weekday(), Weekday::Sat | Weekday::Sun))
+        .unwrap_or(false)
 }
 
 fn build_planning_rows(planning: &MonthlyPlanning) -> Vec<PlanningRowData> {
@@ -529,11 +913,14 @@ fn build_planning_cells(planning: &MonthlyPlanning, row: &PlanningRow) -> Vec<Pl
         .collect()
 }
 
-fn role_from_index(index: i32) -> Result<JobRole, AppError> {
-    JobRole::ALL
-        .get(index as usize)
-        .copied()
-        .ok_or_else(|| AppError::InvalidJobRole(index.to_string()))
+fn non_empty_shared_string(value: &SharedString) -> Option<String> {
+    let trimmed = value.trim();
+
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
 }
 
 fn shift_from_index(index: i32) -> Result<ShiftKind, AppError> {
@@ -545,14 +932,6 @@ fn shift_from_index(index: i32) -> Result<ShiftKind, AppError> {
         .get(index as usize)
         .copied()
         .ok_or_else(|| AppError::InvalidShiftKind(index.to_string()))
-}
-
-fn job_role_to_index(role: JobRole) -> i32 {
-    JobRole::ALL
-        .iter()
-        .position(|candidate| *candidate == role)
-        .map(|index| index as i32)
-        .unwrap_or(0)
 }
 
 fn shift_to_index(shift_kind: ShiftKind) -> i32 {
@@ -584,17 +963,72 @@ mod tests {
     use super::*;
     use crate::application::PlanningGenerator;
     use crate::domain::Assignment;
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use std::sync::{Mutex, MutexGuard, Once, OnceLock};
 
-    fn worker(worker_id: &str, display_name: &str, job_role: JobRole) -> Worker {
-        Worker::new(WorkerId::new(worker_id).unwrap(), display_name, job_role).unwrap()
+    fn ensure_ui_test_backend() {
+        static INIT: Once = Once::new();
+
+        INIT.call_once(i_slint_backend_testing::init_integration_test_with_mock_time);
+    }
+
+    fn ui_test_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    fn role(label: &str) -> JobRole {
+        JobRole::new(label).unwrap()
+    }
+
+    #[derive(Default)]
+    struct FakeStartupWindow {
+        maximized_requested: Cell<bool>,
+    }
+
+    impl StartupWindowControl for FakeStartupWindow {
+        fn request_maximized(&self) {
+            self.maximized_requested.set(true);
+        }
+    }
+
+    fn worker(worker_id: &str, last_name: &str, first_name: &str, job_role: &str) -> Worker {
+        Worker::new(
+            WorkerId::new(worker_id).unwrap(),
+            last_name,
+            first_name,
+            role(job_role),
+        )
+        .unwrap()
+    }
+
+    fn build_test_controller() -> (AppWindow, AppController, WorkerService, AssignmentService) {
+        ensure_ui_test_backend();
+
+        let database = Rc::new(SqliteDatabase::open_in_memory().unwrap());
+        let worker_service = WorkerService::new(database.clone());
+        let assignment_service = AssignmentService::new(database.clone());
+        let controller = AppController::new(
+            JobRoleService::new(database.clone()),
+            worker_service.clone(),
+            assignment_service.clone(),
+            PlanningFacade::new(worker_service.clone(), assignment_service.clone()),
+            database.database_path_hint(),
+        );
+        let ui = AppWindow::new().unwrap();
+
+        (ui, controller, worker_service, assignment_service)
     }
 
     #[test]
     fn ui_mapping_builds_filled_and_empty_cells() {
         let workers = vec![worker(
             "worker-01",
-            "Alice Martin",
-            JobRole::OperateurProduction,
+            "Martin",
+            "Alice",
+            "Operateur de production",
         )];
         let assignments = vec![Assignment::new(
             WorkerId::new("worker-01").unwrap(),
@@ -611,15 +1045,290 @@ mod tests {
     }
 
     #[test]
-    fn ui_mapping_builds_worker_options() {
+    fn ui_mapping_builds_worker_rows_and_options() {
         let workers = vec![
-            worker("worker-01", "Alice Martin", JobRole::OperateurProduction),
-            worker("worker-02", "Bruno Leroy", JobRole::ChefDEquipes),
+            worker("worker-01", "Martin", "Alice", "Operateur de production"),
+            worker("worker-02", "Leroy", "Bruno", "Chef d'equipes"),
         ];
+
+        let rows = build_worker_rows(&workers);
         let options = build_assignment_worker_options(&workers);
 
-        assert_eq!(options.len(), 2);
-        assert!(options[0].contains("Alice Martin"));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].last_name, SharedString::from("Martin"));
+        assert_eq!(rows[0].first_name, SharedString::from("Alice"));
+        assert_eq!(rows[1].job_role_label, SharedString::from("Chef d'equipes"));
+        assert!(options[0].contains("Martin Alice"));
         assert!(options[1].contains("Chef d'equipes"));
+    }
+
+    #[test]
+    fn ui_mapping_builds_day_headers_with_weekday_context() {
+        let headers = build_day_headers(2026, 4, 7);
+
+        assert_eq!(headers.len(), 7);
+        assert_eq!(headers[0].label, SharedString::from("1"));
+        assert_eq!(headers[0].weekday_label, SharedString::from("Me"));
+        assert!(!headers[0].is_weekend);
+        assert_eq!(headers[3].weekday_label, SharedString::from("Sa"));
+        assert!(headers[3].is_weekend);
+        assert_eq!(headers[4].weekday_label, SharedString::from("Di"));
+        assert!(headers[4].is_weekend);
+    }
+
+    #[test]
+    fn non_empty_shared_string_returns_none_for_blank_values() {
+        assert_eq!(non_empty_shared_string(&SharedString::from("  ")), None);
+        assert_eq!(
+            non_empty_shared_string(&SharedString::from(" worker-01 ")),
+            Some("worker-01".to_owned())
+        );
+    }
+
+    #[test]
+    fn startup_window_requests_maximized_state() {
+        let window = FakeStartupWindow::default();
+
+        configure_startup_window(&window);
+
+        assert!(window.maximized_requested.get());
+    }
+
+    #[test]
+    fn ui_window_state_and_confirmation_flows_are_consistent() {
+        let _guard = ui_test_lock();
+        ensure_ui_test_backend();
+
+        let ui = AppWindow::new().unwrap();
+        schedule_startup_window(&ui).unwrap();
+
+        assert_eq!(
+            ui.get_worker_form_mode_label(),
+            SharedString::from("Nouvelle fiche")
+        );
+        assert_eq!(
+            ui.get_worker_form_identifier_label(),
+            SharedString::from("Genere automatiquement a l'enregistrement")
+        );
+        assert_eq!(
+            ui.get_worker_form_action_hint_label(),
+            SharedString::from("Je complete d'abord la fiche pour activer l'enregistrement.")
+        );
+        assert_eq!(
+            ui.get_planning_selection_label(),
+            SharedString::from("Aucune cellule selectionnee")
+        );
+        assert_eq!(
+            ui.get_planning_selection_state_label(),
+            SharedString::from(
+                "Je selectionne une cellule dans la grille pour preparer une affectation."
+            )
+        );
+        assert_eq!(
+            ui.get_planning_assignment_action_hint_label(),
+            SharedString::from(
+                "Je selectionne un effectif, un jour et un horaire avant d'enregistrer."
+            )
+        );
+
+        assert!(!ui.get_can_add_job_role());
+        assert!(!ui.get_can_save_worker());
+        assert!(!ui.get_can_save_assignment());
+        assert!(!ui.get_can_delete_assignment());
+
+        ui.set_new_role_name("Chef de ligne".into());
+        assert!(ui.get_can_add_job_role());
+
+        ui.set_worker_form_last_name("Martin".into());
+        ui.set_worker_form_first_name("Alice".into());
+        ui.set_worker_form_role_index(0);
+        ui.set_worker_form_existing(true);
+        assert!(ui.get_can_save_worker());
+        assert!(ui.get_can_delete_worker());
+        assert_eq!(
+            ui.get_worker_form_mode_label(),
+            SharedString::from("Modification")
+        );
+        assert_eq!(
+            ui.get_worker_form_validation_label(),
+            SharedString::from("La fiche est prete a etre enregistree.")
+        );
+        assert_eq!(
+            ui.get_worker_form_action_hint_label(),
+            SharedString::from("Le bouton d'enregistrement reste disponible en bas de la fiche.")
+        );
+
+        ui.set_assignment_worker_index(0);
+        ui.set_assignment_day(8);
+        ui.set_assignment_shift_index(2);
+        assert!(ui.get_can_save_assignment());
+        assert!(!ui.get_can_delete_assignment());
+        assert_eq!(
+            ui.get_planning_selection_label(),
+            SharedString::from(format!("Jour 8 / {}", ui.get_planning_period_label()))
+        );
+        assert_eq!(
+            ui.get_planning_selection_state_label(),
+            SharedString::from("Cette nouvelle affectation est prete a etre enregistree.")
+        );
+        assert_eq!(
+            ui.get_planning_assignment_action_hint_label(),
+            SharedString::from(
+                "Le bouton d'enregistrement reste disponible dans la barre d'actions."
+            )
+        );
+
+        ui.set_assignment_existing(true);
+        assert!(ui.get_can_delete_assignment());
+        assert_eq!(
+            ui.get_planning_selection_state_label(),
+            SharedString::from(
+                "Cette cellule contient deja une affectation que je peux modifier ou supprimer."
+            )
+        );
+
+        ui.set_assignment_shift_index(-1);
+        assert!(ui.get_can_delete_assignment());
+        assert_eq!(
+            ui.get_planning_selection_state_label(),
+            SharedString::from(
+                "Cette cellule contient deja une affectation que je peux modifier ou supprimer."
+            )
+        );
+        ui.set_assignment_existing(false);
+        assert!(!ui.get_can_delete_assignment());
+        assert_eq!(
+            ui.get_planning_selection_state_label(),
+            SharedString::from(
+                "Cette cellule est libre. Je choisis un horaire pour l'enregistrer."
+            )
+        );
+
+        let (ui, mut controller, worker_service, assignment_service) = build_test_controller();
+        worker_service
+            .save_worker(
+                Some("worker-01".to_owned()),
+                "Martin",
+                "Alice",
+                role("Operateur de production"),
+            )
+            .unwrap();
+        worker_service
+            .save_worker(
+                Some("worker-02".to_owned()),
+                "Leroy",
+                "Bruno",
+                role("Chef d'equipes"),
+            )
+            .unwrap();
+        let worker = worker_service
+            .list_all()
+            .unwrap()
+            .into_iter()
+            .find(|worker| worker.id().as_str() == "worker-01")
+            .unwrap();
+        assignment_service
+            .upsert_assignment(
+                worker.id(),
+                PlanningDate::new(2026, 4, 8).unwrap(),
+                ShiftKind::Night,
+            )
+            .unwrap();
+        controller.initialize(&ui).unwrap();
+
+        assert!(matches!(
+            controller.request_assignment_delete_confirmation(&ui),
+            Err(AppError::MissingWorkerSelection)
+        ));
+
+        controller
+            .select_cell(&ui, worker.id().as_str(), 7)
+            .unwrap();
+        assert!(matches!(
+            controller.request_assignment_delete_confirmation(&ui),
+            Err(AppError::MissingAssignmentSelection)
+        ));
+
+        controller
+            .select_cell(&ui, worker.id().as_str(), 8)
+            .unwrap();
+        controller
+            .request_assignment_delete_confirmation(&ui)
+            .unwrap();
+        assert!(ui.get_assignment_delete_confirmation_pending());
+        assert_eq!(
+            ui.get_planning_assignment_action_hint_label(),
+            SharedString::from("Je confirme ou j'annule d'abord la suppression en cours.")
+        );
+
+        controller.cancel_assignment_delete_confirmation(&ui);
+        assert!(!ui.get_assignment_delete_confirmation_pending());
+
+        controller
+            .request_assignment_delete_confirmation(&ui)
+            .unwrap();
+        controller
+            .select_cell(&ui, worker.id().as_str(), 7)
+            .unwrap();
+        assert!(!ui.get_assignment_delete_confirmation_pending());
+
+        let worker_b_index = controller
+            .current_workers
+            .iter()
+            .position(|candidate| candidate.id().as_str() == "worker-02")
+            .unwrap() as i32;
+        controller
+            .select_cell(&ui, worker.id().as_str(), 8)
+            .unwrap();
+        controller
+            .request_assignment_delete_confirmation(&ui)
+            .unwrap();
+        controller
+            .update_assignment_worker(&ui, worker_b_index)
+            .unwrap();
+        assert_eq!(ui.get_assignment_worker_index(), worker_b_index);
+        assert_eq!(ui.get_assignment_day(), 8);
+        assert!(!ui.get_assignment_existing());
+        assert_eq!(ui.get_assignment_shift_index(), -1);
+        assert!(!ui.get_can_delete_assignment());
+        assert!(!ui.get_assignment_delete_confirmation_pending());
+
+        controller
+            .update_assignment_shift(&ui, shift_to_index(ShiftKind::Day))
+            .unwrap();
+        assert!(ui.get_can_save_assignment());
+        assert!(!ui.get_can_delete_assignment());
+        assert!(
+            ui.get_assignment_summary()
+                .to_string()
+                .contains("Preparation Journee 08h30 - 16h30")
+        );
+        assert!(matches!(
+            controller.request_assignment_delete_confirmation(&ui),
+            Err(AppError::MissingAssignmentSelection)
+        ));
+
+        controller.clear_assignment_form(&ui);
+        assert_eq!(ui.get_assignment_worker_index(), -1);
+        assert_eq!(ui.get_assignment_shift_index(), -1);
+        assert_eq!(ui.get_assignment_day(), 0);
+        assert!(!ui.get_assignment_existing());
+        assert!(!ui.get_assignment_delete_confirmation_pending());
+
+        assert!(matches!(
+            controller.request_worker_delete_confirmation(&ui),
+            Err(AppError::MissingWorkerSelection)
+        ));
+
+        controller.select_worker(&ui, worker.id().as_str());
+        controller.request_worker_delete_confirmation(&ui).unwrap();
+        assert!(ui.get_worker_delete_confirmation_pending());
+
+        controller.cancel_worker_delete_confirmation(&ui);
+        assert!(!ui.get_worker_delete_confirmation_pending());
+
+        controller.request_worker_delete_confirmation(&ui).unwrap();
+        controller.clear_worker_form(&ui);
+        assert!(!ui.get_worker_delete_confirmation_pending());
     }
 }
