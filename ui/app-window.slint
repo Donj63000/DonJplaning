@@ -1,31 +1,61 @@
+
 import { Button, ComboBox, HorizontalBox, LineEdit, ScrollView, VerticalBox } from "std-widgets.slint";
 
 export struct WorkerRowData {
     id: string,
-    last_name: string,
-    first_name: string,
+    display_name: string,
     job_role_label: string,
+    team_name: string,
+}
+
+export struct ShiftSlotRowData {
+    id: string,
+    name: string,
+    short_code: string,
+    time_range: string,
+    style_label: string,
+    active_label: string,
+}
+
+export struct TeamRowData {
+    id: string,
+    name: string,
+    anchor_shift_label: string,
+    member_count: int,
+    leader_name: string,
+    active_label: string,
+}
+
+export struct TeamMemberRowData {
+    worker_id: string,
+    worker_name: string,
+    role_label: string,
 }
 
 export struct DayHeaderData {
-    day: int,
-    label: string,
+    day_offset: int,
+    date_label: string,
     weekday_label: string,
+    month_label: string,
     is_weekend: bool,
 }
 
 export struct PlanningCellData {
-    day: int,
+    day_offset: int,
     short_code: string,
-    shift_label: string,
+    label: string,
     time_range: string,
     style_token: string,
     has_assignment: bool,
+    is_manual: bool,
+    is_manual_off: bool,
 }
 
 export struct PlanningRowData {
     worker_id: string,
     worker_name: string,
+    team_name: string,
+    team_role_label: string,
     job_role_label: string,
     cells: [PlanningCellData],
 }
@@ -38,27 +68,20 @@ component SidebarButton inherits FocusScope {
     min-height: 46px;
     accessible-role: button;
     accessible-label: label;
-    accessible-description: active ? "Page actuellement affichee." : "Ouvre cette page.";
     accessible-action-default => { root.clicked(); }
-
-    pure function button_background(active: bool, hovered: bool) -> brush {
-        if (active) { return hovered ? #456a53 : #4f755d; }
-        if (hovered) { return #edf3ee; }
-        return #f7f9f7;
-    }
 
     Rectangle {
         border-radius: 14px;
         border-width: root.has-focus ? 2px : 1px;
-        border-color: root.has-focus ? #264538 : (active ? #4f755d : #d6dfd6);
-        background: root.button_background(root.active, area.has-hover);
+        border-color: root.has-focus ? #264538 : (root.active ? #4f755d : #d6dfd6);
+        background: root.active ? (area.has-hover ? #456a53 : #4f755d) : (area.has-hover ? #edf3ee : #f7f9f7);
         width: parent.width;
         height: parent.height;
 
         Text {
-            text: label;
-            color: active ? white : #21352b;
-            font-weight: 600;
+            text: root.label;
+            color: root.active ? white : #21352b;
+            font-weight: 700;
             horizontal-alignment: center;
             vertical-alignment: center;
             width: parent.width;
@@ -73,21 +96,12 @@ component SidebarButton inherits FocusScope {
             root.clicked();
         }
     }
-
-    key-pressed(event) => {
-        if (event.text == Key.Return || event.text == Key.Space) {
-            root.clicked();
-            accept
-        } else {
-            reject
-        }
-    }
 }
 
 component FieldLabel inherits Text {
     color: #3f584d;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 700;
 }
 
 component MetricTile inherits Rectangle {
@@ -95,8 +109,8 @@ component MetricTile inherits Rectangle {
     in property <string> value;
     in property <string> helper;
 
-    min-width: 158px;
-    preferred-width: 158px;
+    min-width: 168px;
+    preferred-width: 168px;
     min-height: 92px;
     border-radius: 18px;
     border-width: 1px;
@@ -108,21 +122,21 @@ component MetricTile inherits Rectangle {
         spacing: 4px;
 
         Text {
-            text: label;
+            text: root.label;
             color: #6a7c71;
             font-size: 11px;
-            font-weight: 600;
+            font-weight: 700;
         }
 
         Text {
-            text: value;
+            text: root.value;
             color: #183027;
             font-size: 24px;
             font-weight: 700;
         }
 
-        if helper != "" : Text {
-            text: helper;
+        if root.helper != "" : Text {
+            text: root.helper;
             color: #738378;
             font-size: 11px;
             wrap: word-wrap;
@@ -130,123 +144,22 @@ component MetricTile inherits Rectangle {
     }
 }
 
-component SurfaceBadge inherits Rectangle {
-    in property <string> text;
-    in property <bool> accent;
-    in property <bool> warning;
-    in property <length> badge_width: 108px;
-
-    min-width: badge_width;
-    preferred-width: badge_width;
-    min-height: 28px;
-    border-radius: 14px;
-    border-width: 1px;
-    border-color: warning ? #d7c49f : (accent ? #87a894 : #d7dfd7);
-    background: warning ? #f7efe0 : (accent ? #e5efe8 : #f6f8f6);
-
-    Text {
-        text: root.text;
-        color: warning ? #6a5128 : (accent ? #244136 : #5e7166);
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        font-size: 11px;
-        font-weight: 600;
-        width: parent.width;
-        height: parent.height;
-    }
-}
-
-component ShiftLegendItem inherits Rectangle {
-    in property <string> short_code;
-    in property <string> label;
-    in property <string> time_range;
-    in property <string> style_token;
-
-    min-width: 176px;
-    preferred-width: 176px;
-    min-height: 68px;
-    border-radius: 18px;
-    border-width: 1px;
-    border-color: #d6dfd6;
-    background: #fbfcfb;
-
-    pure function chip_background(token: string) -> brush {
-        if (token == "night-blue") { return #4c6f93; }
-        if (token == "afternoon-red") { return #b85a54; }
-        if (token == "morning-yellow") { return #d9bf65; }
-        if (token == "day-beige") { return #d3c4a7; }
-        return #edf2ee;
-    }
-
-    pure function chip_text_color(token: string) -> color {
-        return token == "night-blue" || token == "afternoon-red" ? white : #1a2f26;
-    }
-
-    HorizontalBox {
-        padding: 14px;
-        spacing: 12px;
-
-        Rectangle {
-            min-width: 40px;
-            max-width: 40px;
-            min-height: 40px;
-            max-height: 40px;
-            border-radius: 12px;
-            background: root.chip_background(root.style_token);
-
-            Text {
-                text: root.short_code;
-                color: root.chip_text_color(root.style_token);
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                font-size: 16px;
-                font-weight: 700;
-                width: parent.width;
-                height: parent.height;
-            }
-        }
-
-        VerticalBox {
-            alignment: center;
-            spacing: 2px;
-            horizontal-stretch: 1;
-
-            Text {
-                text: root.label;
-                color: #1b3229;
-                font-size: 13px;
-                font-weight: 700;
-            }
-
-            Text {
-                text: root.time_range;
-                color: #64766b;
-                font-size: 11px;
-                wrap: word-wrap;
-            }
-        }
-    }
-}
-
 component WorkerListItem inherits FocusScope {
-    in property <WorkerRowData> worker_data;
+    in property <WorkerRowData> worker_row;
     in property <bool> selected;
     callback activated(string);
 
-    horizontal-stretch: 1;
-    min-height: 72px;
-    preferred-height: 72px;
-    max-height: 72px;
+    min-height: 74px;
     accessible-role: button;
-    accessible-label: worker_data.last_name + " " + worker_data.first_name;
-    accessible-description: worker_data.job_role_label;
-    accessible-action-default => { root.activated(root.worker_data.id); }
+    accessible-label: root.worker_row.display_name;
+    accessible-description: root.worker_row.job_role_label;
+    accessible-action-default => { root.activated(root.worker_row.id); }
 
     Rectangle {
         border-radius: 14px;
         border-width: root.has-focus ? 2px : 1px;
-        border-color: root.has-focus ? #264538 : (selected ? #7ea08a : #dde5dd);
-        background: selected ? #e3eee6 : (area.has-hover ? #f4f7f4 : #fbfcfb);
+        border-color: root.has-focus ? #264538 : (root.selected ? #7ea08a : #dde5dd);
+        background: root.selected ? #e3eee6 : (area.has-hover ? #f4f7f4 : #fbfcfb);
         width: parent.width;
         height: parent.height;
 
@@ -258,60 +171,35 @@ component WorkerListItem inherits FocusScope {
                 min-width: 4px;
                 max-width: 4px;
                 border-radius: 2px;
-                background: selected ? #4f755d : (area.has-hover ? #a6b8ab : transparent);
+                background: root.selected ? #4f755d : transparent;
             }
 
             VerticalBox {
-                alignment: start;
-                spacing: 4px;
+                alignment: center;
+                spacing: 2px;
                 horizontal-stretch: 1;
 
                 Text {
-                    text: worker_data.last_name + " " + worker_data.first_name;
-                    color: #193028;
-                    font-size: 14px;
+                    text: root.worker_row.display_name;
+                    color: #183027;
+                    font-size: 13px;
                     font-weight: 700;
+                    wrap: word-wrap;
                 }
 
-                HorizontalBox {
-                    spacing: 8px;
-
-                    Rectangle {
-                        min-width: 176px;
-                        preferred-width: 176px;
-                        min-height: 24px;
-                        border-radius: 12px;
-                        border-width: 1px;
-                        border-color: #d8e1d9;
-                        background: #f4f7f4;
-
-                        Text {
-                            text: worker_data.job_role_label;
-                            color: #4d6156;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                            font-size: 11px;
-                            font-weight: 600;
-                            x: 10px;
-                            width: parent.width - 20px;
-                            height: parent.height;
-                        }
-                    }
-
-                    Text {
-                        text: worker_data.id;
-                        color: #7a8b80;
-                        vertical-alignment: center;
-                        font-size: 11px;
-                    }
+                Text {
+                    text: root.worker_row.job_role_label;
+                    color: #6b7c72;
+                    font-size: 11px;
+                    wrap: word-wrap;
                 }
-            }
 
-            if selected : SurfaceBadge {
-                text: "Selection";
-                accent: true;
-                warning: false;
-                badge_width: 96px;
+                if root.worker_row.team_name != "" : Text {
+                    text: root.worker_row.team_name;
+                    color: #4f755d;
+                    font-size: 11px;
+                    wrap: word-wrap;
+                }
             }
         }
     }
@@ -320,89 +208,251 @@ component WorkerListItem inherits FocusScope {
         mouse-cursor: pointer;
         clicked => {
             root.focus();
-            root.activated(root.worker_data.id);
-        }
-    }
-
-    key-pressed(event) => {
-        if (event.text == Key.Return || event.text == Key.Space) {
-            root.activated(root.worker_data.id);
-            accept
-        } else {
-            reject
+            root.activated(root.worker_row.id);
         }
     }
 }
 
-component PlanningCellView inherits FocusScope {
-    in property <PlanningCellData> cell_data;
-    in property <string> worker_id;
-    in property <string> worker_name;
-    in property <bool> active;
-    callback selected(string, int);
+component ShiftSlotListItem inherits FocusScope {
+    in property <ShiftSlotRowData> shift_slot_row;
+    in property <bool> selected;
+    callback activated(string);
 
-    min-width: 62px;
-    preferred-width: 62px;
-    min-height: 62px;
-    preferred-height: 62px;
+    min-height: 78px;
     accessible-role: button;
-    accessible-label: worker_name + ", jour " + cell_data.day;
-    accessible-description: cell_data.has_assignment
-        ? cell_data.shift_label + " " + cell_data.time_range
-        : "Creneau libre";
-    accessible-action-default => { root.selected(root.worker_id, root.cell_data.day); }
-
-    pure function is_dark_shift(token: string) -> bool {
-        return token == "night-blue" || token == "afternoon-red";
-    }
-
-    pure function bg(token: string, has_assignment: bool, hovered: bool, active: bool) -> brush {
-        if (!has_assignment) {
-            if (active) { return #dde9e1; }
-            return hovered ? #eef4ef : #f6f8f6;
-        }
-        if (token == "night-blue") { return hovered ? #426387 : (active ? #3e6387 : #4c6f93); }
-        if (token == "afternoon-red") { return hovered ? #a64d47 : (active ? #a64d47 : #b85a54); }
-        if (token == "morning-yellow") { return #d9bf65; }
-        if (token == "day-beige") { return #d3c4a7; }
-        return #e6ebe6;
-    }
+    accessible-label: root.shift_slot_row.name;
+    accessible-description: root.shift_slot_row.time_range;
+    accessible-action-default => { root.activated(root.shift_slot_row.id); }
 
     Rectangle {
-        border-radius: 12px;
-        border-width: root.has-focus || root.active ? 2px : 1px;
-        border-color: root.has-focus
-            ? #234035
-            : (root.active
-                ? #51755d
-                : (cell_data.has_assignment ? #bcccbf : #d9e0d9));
-        background: root.bg(
-            root.cell_data.style_token,
-            root.cell_data.has_assignment,
-            area.has-hover,
-            root.active
-        );
+        border-radius: 14px;
+        border-width: root.has-focus ? 2px : 1px;
+        border-color: root.has-focus ? #264538 : (root.selected ? #7ea08a : #dde5dd);
+        background: root.selected ? #e3eee6 : (area.has-hover ? #f4f7f4 : #fbfcfb);
+        width: parent.width;
+        height: parent.height;
+
+        HorizontalBox {
+            padding: 12px;
+            spacing: 12px;
+
+            Rectangle {
+                min-width: 42px;
+                max-width: 42px;
+                min-height: 42px;
+                max-height: 42px;
+                border-radius: 12px;
+                background: #edf2ee;
+
+                Text {
+                    text: root.shift_slot_row.short_code;
+                    color: #244136;
+                    font-size: 16px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+
+            VerticalBox {
+                alignment: center;
+                spacing: 2px;
+                horizontal-stretch: 1;
+
+                Text {
+                    text: root.shift_slot_row.name;
+                    color: #183027;
+                    font-size: 13px;
+                    font-weight: 700;
+                    wrap: word-wrap;
+                }
+
+                Text {
+                    text: root.shift_slot_row.time_range;
+                    color: #6b7c72;
+                    font-size: 11px;
+                }
+
+                Text {
+                    text: root.shift_slot_row.style_label + " • " + root.shift_slot_row.active_label;
+                    color: #4f755d;
+                    font-size: 11px;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.focus();
+            root.activated(root.shift_slot_row.id);
+        }
+    }
+}
+
+component TeamListItem inherits FocusScope {
+    in property <TeamRowData> team_row;
+    in property <bool> selected;
+    callback activated(string);
+
+    min-height: 82px;
+    accessible-role: button;
+    accessible-label: root.team_row.name;
+    accessible-description: root.team_row.anchor_shift_label;
+    accessible-action-default => { root.activated(root.team_row.id); }
+
+    Rectangle {
+        border-radius: 14px;
+        border-width: root.has-focus ? 2px : 1px;
+        border-color: root.has-focus ? #264538 : (root.selected ? #7ea08a : #dde5dd);
+        background: root.selected ? #e3eee6 : (area.has-hover ? #f4f7f4 : #fbfcfb);
         width: parent.width;
         height: parent.height;
 
         VerticalBox {
-            alignment: center;
+            padding: 12px;
             spacing: 2px;
 
             Text {
-                text: cell_data.has_assignment ? cell_data.short_code : "+";
-                color: cell_data.has_assignment
-                    ? (root.is_dark_shift(root.cell_data.style_token) ? white : #14261d)
-                    : #799082;
-                font-size: 15px;
+                text: root.team_row.name;
+                color: #183027;
+                font-size: 13px;
                 font-weight: 700;
-                horizontal-alignment: center;
             }
 
             Text {
-                text: cell_data.has_assignment ? cell_data.shift_label : "";
-                color: root.is_dark_shift(root.cell_data.style_token) ? white : #1f342b;
+                text: "Reference: " + root.team_row.anchor_shift_label;
+                color: #6b7c72;
+                font-size: 11px;
+                wrap: word-wrap;
+            }
+
+            Text {
+                text: root.team_row.member_count + " membre(s) • " + root.team_row.active_label;
+                color: #4f755d;
+                font-size: 11px;
+                wrap: word-wrap;
+            }
+
+            if root.team_row.leader_name != "" : Text {
+                text: "Chef: " + root.team_row.leader_name;
+                color: #4f755d;
+                font-size: 11px;
+                wrap: word-wrap;
+            }
+        }
+    }
+
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.focus();
+            root.activated(root.team_row.id);
+        }
+    }
+}
+
+component TeamMemberListItem inherits Rectangle {
+    in property <TeamMemberRowData> member_row;
+    callback remove(string);
+
+    min-height: 44px;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: #dde5dd;
+    background: #fbfcfb;
+
+    HorizontalBox {
+        padding: 10px;
+        spacing: 8px;
+
+        VerticalBox {
+            alignment: center;
+            spacing: 0px;
+            horizontal-stretch: 1;
+
+            Text {
+                text: root.member_row.worker_name;
+                color: #183027;
+                font-size: 12px;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+
+            Text {
+                text: root.member_row.role_label;
+                color: #6b7c72;
+                font-size: 11px;
+            }
+        }
+
+        Button {
+            text: "Retirer";
+            clicked => { root.remove(root.member_row.worker_id); }
+        }
+    }
+}
+
+component PlanningShiftCell inherits FocusScope {
+    in property <PlanningCellData> cell;
+    callback activated(int);
+
+    min-width: 72px;
+    preferred-width: 72px;
+    max-width: 72px;
+    min-height: 62px;
+    preferred-height: 62px;
+    max-height: 62px;
+    accessible-role: button;
+    accessible-label: cell.label == "" ? "Cellule vide" : cell.label;
+    accessible-description: cell.time_range;
+    accessible-action-default => { root.activated(root.cell.day_offset); }
+
+    pure function background_for(token: string) -> brush {
+        if (token == "night-blue") { return #4c6f93; }
+        if (token == "afternoon-red") { return #b85a54; }
+        if (token == "morning-yellow") { return #d9bf65; }
+        if (token == "day-beige") { return #d3c4a7; }
+        if (token == "neutral-gray") { return #d0d7d1; }
+        if (token == "off-gray") { return #d9dddd; }
+        return #f8faf8;
+    }
+
+    pure function text_color_for(token: string) -> color {
+        return token == "night-blue" || token == "afternoon-red" ? white : #1a2f26;
+    }
+
+    Rectangle {
+        border-radius: 12px;
+        border-width: root.has-focus || root.cell.is_manual ? 2px : 1px;
+        border-color: root.has-focus ? #264538 : (root.cell.is_manual ? #4f755d : #d6dfd6);
+        background: root.background_for(root.cell.style_token);
+        width: parent.width;
+        height: parent.height;
+
+        VerticalBox {
+            padding: 6px;
+            spacing: 2px;
+            alignment: center;
+
+            Text {
+                text: root.cell.short_code == "" ? "-" : root.cell.short_code;
+                color: root.text_color_for(root.cell.style_token);
+                font-size: 16px;
+                font-weight: 800;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+
+            Text {
+                text: root.cell.is_manual ? (root.cell.is_manual_off ? "Manuel OFF" : "Manuel") : (root.cell.has_assignment ? "Auto" : "");
+                color: root.text_color_for(root.cell.style_token);
                 font-size: 10px;
+                font-weight: 700;
                 horizontal-alignment: center;
             }
         }
@@ -412,139 +462,131 @@ component PlanningCellView inherits FocusScope {
         mouse-cursor: pointer;
         clicked => {
             root.focus();
-            root.selected(root.worker_id, root.cell_data.day);
-        }
-    }
-
-    key-pressed(event) => {
-        if (event.text == Key.Return || event.text == Key.Space) {
-            root.selected(root.worker_id, root.cell_data.day);
-            accept
-        } else {
-            reject
+            root.activated(root.cell.day_offset);
         }
     }
 }
 
 export component AppWindow inherits Window {
     title: "DonJplaning";
-    width: 1560px;
-    height: 940px;
+    width: 1600px;
+    height: 980px;
     background: #eef2ee;
 
     in property <[WorkerRowData]> worker_rows;
+    in property <[ShiftSlotRowData]> shift_slot_rows;
+    in property <[TeamRowData]> team_rows;
+    in property <[TeamMemberRowData]> selected_team_member_rows;
     in property <[DayHeaderData]> day_headers;
     in property <[PlanningRowData]> planning_rows;
+
     in property <[string]> role_options;
-    in property <[string]> shift_options;
-    in property <[string]> assignment_worker_options;
+    in property <[string]> shift_style_options;
+    in property <[string]> active_state_options;
+    in property <[string]> active_shift_slot_options;
+    in property <[string]> team_member_role_options;
+    in property <[string]> team_member_candidate_options;
+
     in-out property <int> current_page: 0;
     in-out property <string> status_message: "";
-    in-out property <string> worker_form_id: "";
-    in-out property <string> worker_form_last_name: "";
-    in-out property <string> worker_form_first_name: "";
-    in-out property <int> worker_form_role_index: 0;
-    in-out property <bool> worker_form_existing: false;
-    in-out property <string> new_role_name: "";
-    in-out property <int> selected_year: 2026;
-    in-out property <int> selected_month: 1;
-    in-out property <int> total_days: 31;
-    in-out property <int> assignment_worker_index: -1;
-    in-out property <int> assignment_shift_index: -1;
-    in-out property <int> assignment_day: 0;
-    in-out property <string> assignment_summary: "";
     in-out property <string> db_path_hint: "";
-    in-out property <bool> worker_delete_confirmation_pending: false;
-    in-out property <bool> assignment_delete_confirmation_pending: false;
-    in-out property <bool> assignment_existing: false;
-    out property <string> worker_form_mode_label:
-        worker_form_existing ? "Modification" : "Nouvelle fiche";
-    out property <string> worker_form_identifier_label:
-        worker_form_existing ? worker_form_id : "Genere automatiquement a l'enregistrement";
-    out property <string> worker_form_validation_label:
-        can_save_worker
-            ? "La fiche est prete a etre enregistree."
-            : "Je renseigne le nom, le prenom et le poste avant d'enregistrer.";
-    out property <string> worker_form_action_hint_label:
-        can_save_worker
-            ? "Le bouton d'enregistrement reste disponible en bas de la fiche."
-            : "Je complete d'abord la fiche pour activer l'enregistrement.";
-    out property <string> planning_period_label:
-        month_label(selected_month) + " " + selected_year;
-    out property <string> planning_workspace_helper_label:
-        planning_rows.length > 0
-            ? "" + planning_rows.length + " effectifs a planifier sur " + total_days + " jours."
-            : "J'ajoute d'abord un effectif pour ouvrir le planning du mois.";
-    out property <string> planning_selection_label:
-        assignment_day > 0
-            ? "Jour " + assignment_day + " / " + month_label(selected_month) + " " + selected_year
-            : "Aucune cellule selectionnee";
-    out property <string> planning_selection_state_label:
-        assignment_day <= 0
-            ? "Je selectionne une cellule dans la grille pour preparer une affectation."
-            : (assignment_existing
-                ? "Cette cellule contient deja une affectation que je peux modifier ou supprimer."
-                : (assignment_shift_index >= 0
-                    ? "Cette nouvelle affectation est prete a etre enregistree."
-                    : "Cette cellule est libre. Je choisis un horaire pour l'enregistrer."));
-    out property <string> planning_assignment_action_hint_label:
-        assignment_delete_confirmation_pending
-            ? "Je confirme ou j'annule d'abord la suppression en cours."
-            : (can_save_assignment
-            ? "Le bouton d'enregistrement reste disponible dans la barre d'actions."
-            : "Je selectionne un effectif, un jour et un horaire avant d'enregistrer.");
-    out property <bool> can_add_job_role: !new_role_name.is-empty;
-    out property <bool> can_save_worker:
-        !worker_form_last_name.is-empty
-        && !worker_form_first_name.is-empty
-        && worker_form_role_index >= 0;
-    out property <bool> can_save_assignment:
-        assignment_worker_index >= 0
-        && assignment_shift_index >= 0
-        && assignment_day > 0;
-    out property <bool> can_delete_worker: worker_form_existing;
-    out property <bool> can_delete_assignment:
-        assignment_existing
-        && assignment_worker_index >= 0
-        && assignment_day > 0;
 
-    callback clear_worker_form();
+    in-out property <string> planning_start_date: "";
+    in-out property <string> planning_days: "90";
+    in-out property <string> selected_cell_worker_id: "";
+    in-out property <string> selected_cell_date: "";
+    in-out property <string> selected_cell_summary: "Aucune cellule selectionnee.";
+    in-out property <int> manual_shift_index: -1;
+    in-out property <int> summary_generated_assignments: 0;
+    in-out property <int> summary_manual_overrides: 0;
+    in-out property <int> summary_active_teams: 0;
+    in-out property <int> summary_planned_workers: 0;
+
+    in-out property <string> worker_form_id: "";
+    in-out property <string> worker_last_name: "";
+    in-out property <string> worker_first_name: "";
+    in-out property <int> worker_role_index: -1;
+    in-out property <bool> worker_existing: false;
+    in-out property <string> new_role_name: "";
+
+    in-out property <string> shift_slot_form_id: "";
+    in-out property <string> shift_slot_name: "";
+    in-out property <string> shift_slot_code: "";
+    in-out property <string> shift_slot_start_hour: "";
+    in-out property <string> shift_slot_start_minute: "";
+    in-out property <string> shift_slot_end_hour: "";
+    in-out property <string> shift_slot_end_minute: "";
+    in-out property <int> shift_slot_style_index: 0;
+    in-out property <int> shift_slot_active_index: 0;
+    in-out property <bool> shift_slot_existing: false;
+    in-out property <string> rotation_reference_week_start: "";
+    in-out property <int> rotation_week_one_shift_index: 0;
+    in-out property <int> rotation_week_two_shift_index: 1;
+    in-out property <int> rotation_week_three_shift_index: 2;
+
+    in-out property <string> team_form_id: "";
+    in-out property <string> team_name: "";
+    in-out property <int> team_anchor_shift_index: 0;
+    in-out property <int> team_active_index: 0;
+    in-out property <bool> team_existing: false;
+    in-out property <int> team_member_worker_index: -1;
+    in-out property <int> team_member_role_index: 1;
+
+    out property <bool> has_selected_cell: selected_cell_worker_id != "" && selected_cell_date != "";
+    out property <bool> can_generate_planning: !planning_start_date.is-empty && !planning_days.is-empty;
+    out property <bool> can_save_manual_assignment: has_selected_cell && manual_shift_index >= 0;
+    out property <bool> can_save_worker: !worker_last_name.is-empty && !worker_first_name.is-empty && worker_role_index >= 0;
+    out property <bool> can_add_job_role: !new_role_name.is-empty;
+    out property <bool> can_save_shift_slot:
+        !shift_slot_name.is-empty
+        && !shift_slot_code.is-empty
+        && !shift_slot_start_hour.is-empty
+        && !shift_slot_start_minute.is-empty
+        && !shift_slot_end_hour.is-empty
+        && !shift_slot_end_minute.is-empty
+        && shift_slot_style_index >= 0
+        && shift_slot_active_index >= 0;
+    out property <bool> can_save_team: !team_name.is-empty && team_anchor_shift_index >= 0 && team_active_index >= 0;
+    out property <bool> can_add_team_member: team_form_id != "" && team_member_worker_index >= 0 && team_member_role_index >= 0;
+
+    callback select_page(int);
+
+    callback generate_planning(string, string);
+    callback select_planning_cell(string, int);
+    callback save_manual_assignment(string, string, int);
+    callback mark_manual_off(string, string);
+    callback clear_manual_override(string, string);
+    callback clear_planning_selection();
+
     callback select_worker(string);
+    callback clear_worker_form();
     callback save_worker(string, string, string, int);
     callback add_job_role(string);
-    callback request_worker_delete_confirmation();
-    callback cancel_worker_delete_confirmation();
     callback delete_worker(string);
-    callback previous_month();
-    callback next_month();
-    callback load_month(int, int);
-    callback clear_assignment_form();
-    callback select_cell(string, int);
-    callback assignment_worker_changed(int);
-    callback assignment_shift_changed(int);
-    callback save_assignment(int, int, int, int, int);
-    callback request_assignment_delete_confirmation();
-    callback cancel_assignment_delete_confirmation();
-    callback delete_assignment(int, int, int, int);
+
+    callback select_shift_slot(string);
+    callback clear_shift_slot_form();
+    callback save_shift_slot(string, string, string, string, string, string, string, int, int);
+    callback save_rotation_cycle(string, int, int, int);
+
+    callback select_team(string);
+    callback clear_team_form();
+    callback save_team(string, string, int, int);
+    callback add_team_member(string, int, int);
+    callback remove_team_member(string, string);
 
     pure function page_title() -> string {
-        return current_page == 0 ? "Effectif" : "Planning";
+        if (current_page == 0) { return "Planning 3x8"; }
+        if (current_page == 1) { return "Equipes"; }
+        if (current_page == 2) { return "Plages horaires"; }
+        return "Effectif";
     }
 
-    pure function month_label(month: int) -> string {
-        if (month == 1) { return "Janvier"; }
-        if (month == 2) { return "Fevrier"; }
-        if (month == 3) { return "Mars"; }
-        if (month == 4) { return "Avril"; }
-        if (month == 5) { return "Mai"; }
-        if (month == 6) { return "Juin"; }
-        if (month == 7) { return "Juillet"; }
-        if (month == 8) { return "Aout"; }
-        if (month == 9) { return "Septembre"; }
-        if (month == 10) { return "Octobre"; }
-        if (month == 11) { return "Novembre"; }
-        if (month == 12) { return "Decembre"; }
-        return "Mois";
+    pure function page_helper() -> string {
+        if (current_page == 0) { return "Je genere le planning automatique puis je corrige au besoin cellule par cellule."; }
+        if (current_page == 1) { return "Je garde une equipe par poste de reference, avec un chef d'equipe et un ou plusieurs operateurs."; }
+        if (current_page == 2) { return "Je regle ici les horaires et le cycle hebdomadaire 13-21 / 5-13 / 21-5."; }
+        return "Je maintiens ici la base salariée et les postes metier.";
     }
 
     HorizontalBox {
@@ -552,8 +594,8 @@ export component AppWindow inherits Window {
         padding: 18px;
 
         Rectangle {
-            min-width: 220px;
-            preferred-width: 220px;
+            min-width: 228px;
+            preferred-width: 228px;
             border-radius: 22px;
             border-width: 1px;
             border-color: #d6dfd6;
@@ -563,38 +605,37 @@ export component AppWindow inherits Window {
                 padding: 18px;
                 spacing: 16px;
 
-                Rectangle {
-                    background: transparent;
-                    min-height: 64px;
-
-                    VerticalBox {
-                        spacing: 4px;
-                        Text { text: "DonJplaning"; color: #193028; font-size: 26px; font-weight: 700; }
-                        Text { text: "3x8"; color: #65786d; font-size: 12px; }
-                    }
+                VerticalBox {
+                    spacing: 4px;
+                    Text { text: "DonJplaning"; color: #193028; font-size: 26px; font-weight: 700; }
+                    Text { text: "Usine 3x8"; color: #65786d; font-size: 12px; }
                 }
 
-                SidebarButton {
-                    label: "Effectif";
-                    active: root.current_page == 0;
-                    clicked => {
-                        root.current_page = 0;
-                        root.assignment_delete_confirmation_pending = false;
-                    }
-                }
                 SidebarButton {
                     label: "Planning";
+                    active: root.current_page == 0;
+                    clicked => { root.select_page(0); }
+                }
+                SidebarButton {
+                    label: "Equipes";
                     active: root.current_page == 1;
-                    clicked => {
-                        root.current_page = 1;
-                        root.worker_delete_confirmation_pending = false;
-                    }
+                    clicked => { root.select_page(1); }
+                }
+                SidebarButton {
+                    label: "Plages horaires";
+                    active: root.current_page == 2;
+                    clicked => { root.select_page(2); }
+                }
+                SidebarButton {
+                    label: "Effectif";
+                    active: root.current_page == 3;
+                    clicked => { root.select_page(3); }
                 }
 
                 Rectangle { vertical-stretch: 1; background: transparent; }
 
                 Rectangle {
-                    min-height: 84px;
+                    min-height: 92px;
                     border-radius: 16px;
                     border-width: 1px;
                     border-color: #d6dfd6;
@@ -603,7 +644,8 @@ export component AppWindow inherits Window {
                     VerticalBox {
                         padding: 12px;
                         spacing: 4px;
-                        Text { text: "Base"; color: #244136; font-size: 12px; font-weight: 600; }
+
+                        Text { text: "Base locale"; color: #244136; font-size: 12px; font-weight: 700; }
                         Text { text: root.db_path_hint; color: #6d7d73; wrap: word-wrap; font-size: 11px; }
                     }
                 }
@@ -621,8 +663,8 @@ export component AppWindow inherits Window {
                 padding: 20px;
                 spacing: 16px;
 
-                HorizontalBox {
-                    spacing: 12px;
+                VerticalBox {
+                    spacing: 4px;
 
                     Text {
                         text: root.page_title();
@@ -631,861 +673,81 @@ export component AppWindow inherits Window {
                         font-weight: 700;
                     }
 
-                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    Text {
+                        text: root.page_helper();
+                        color: #65786d;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                }
 
-                    if root.status_message != "" : Rectangle {
-                        min-width: 300px;
-                        border-radius: 14px;
-                        border-width: 1px;
-                        border-color: #d4ddd4;
-                        background: #edf2ee;
+                if root.status_message != "" : Rectangle {
+                    border-radius: 14px;
+                    border-width: 1px;
+                    border-color: #cad8cd;
+                    background: #eef5ef;
+                    min-height: 52px;
 
-                        Text {
-                            text: root.status_message;
-                            color: #29463a;
-                            wrap: word-wrap;
-                            x: 12px;
-                            y: 10px;
-                            width: parent.width - 24px;
-                            height: parent.height - 20px;
-                            font-size: 12px;
-                        }
+                    Text {
+                        text: root.status_message;
+                        color: #264538;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                        vertical-alignment: center;
+                        width: parent.width - 24px;
+                        height: parent.height;
+                        x: 12px;
                     }
                 }
 
                 if root.current_page == 0 : VerticalBox {
-                    spacing: 18px;
+                    spacing: 16px;
                     vertical-stretch: 1;
 
-                    Rectangle {
-                        min-height: 126px;
-                        max-height: 126px;
-                        border-radius: 22px;
-                        border-width: 1px;
-                        border-color: #d6dfd6;
-                        background: #eef4ef;
+                    HorizontalBox {
+                        spacing: 12px;
 
-                        HorizontalBox {
-                            padding: 18px;
-                            spacing: 18px;
-
-                            VerticalBox {
-                                spacing: 6px;
-                                horizontal-stretch: 1.2;
-
-                                Text {
-                                    text: "Base effectif";
-                                    color: #193028;
-                                    font-size: 24px;
-                                    font-weight: 700;
-                                }
-
-                                Text {
-                                    text: "Je gere les fiches ouvriers, les postes et la selection de travail sans surcharge visuelle.";
-                                    color: #5f7266;
-                                    wrap: word-wrap;
-                                    font-size: 12px;
-                                }
-
-                                HorizontalBox {
-                                    spacing: 8px;
-
-                                    SurfaceBadge {
-                                        text: root.worker_form_existing ? "Edition en cours" : "Preparation d'une nouvelle fiche";
-                                        accent: root.worker_form_existing;
-                                        warning: false;
-                                        badge_width: root.worker_form_existing ? 144px : 220px;
-                                    }
-
-                                    SurfaceBadge {
-                                        text: root.can_save_worker ? "Formulaire complet" : "Informations a completer";
-                                        accent: root.can_save_worker;
-                                        warning: !root.can_save_worker;
-                                        badge_width: root.can_save_worker ? 152px : 196px;
-                                    }
-                                }
-                            }
-
-                            MetricTile {
-                                label: "Effectifs";
-                                value: "" + root.worker_rows.length;
-                                helper: "fiches enregistrees";
-                            }
-
-                            MetricTile {
-                                label: "Postes";
-                                value: "" + root.role_options.length;
-                                helper: "catalogue actif";
-                            }
-
-                            MetricTile {
-                                label: "Mode";
-                                value: root.worker_form_existing ? "Edition" : "Creation";
-                                helper: root.worker_form_existing ? "fiche selectionnee" : "nouvelle entree";
-                            }
+                        MetricTile {
+                            label: "Affectations generees";
+                            value: "" + root.summary_generated_assignments;
+                            helper: "Dans la plage visible.";
+                        }
+                        MetricTile {
+                            label: "Corrections manuelles";
+                            value: "" + root.summary_manual_overrides;
+                            helper: "Ces corrections passent au-dessus du calcul automatique.";
+                        }
+                        MetricTile {
+                            label: "Equipes actives";
+                            value: "" + root.summary_active_teams;
+                            helper: "Une equipe active doit couvrir chaque poste du cycle.";
+                        }
+                        MetricTile {
+                            label: "Salaries planifies";
+                            value: "" + root.summary_planned_workers;
+                            helper: "Membres d'equipe actuellement rattaches.";
                         }
                     }
 
                     HorizontalBox {
-                        spacing: 18px;
+                        spacing: 16px;
                         vertical-stretch: 1;
 
                         Rectangle {
-                            horizontal-stretch: 1.65;
-                            vertical-stretch: 1;
+                            min-width: 360px;
+                            preferred-width: 360px;
                             border-radius: 20px;
                             border-width: 1px;
                             border-color: #d7dfd7;
                             background: #f3f6f3;
-
-                            VerticalBox {
-                                padding: 18px;
-                                spacing: 14px;
-
-                                HorizontalBox {
-                                    spacing: 10px;
-
-                                    VerticalBox {
-                                        spacing: 4px;
-                                        horizontal-stretch: 1;
-
-                                        Text { text: "Annuaire effectif"; color: #1d342b; font-size: 20px; font-weight: 700; }
-                                        Text {
-                                            text: "Je selectionne une fiche pour la modifier ou je prepare une nouvelle entree.";
-                                            color: #66786d;
-                                            font-size: 12px;
-                                        }
-                                    }
-
-                                    SurfaceBadge {
-                                        text: "" + root.worker_rows.length + " fiches";
-                                        accent: true;
-                                        warning: false;
-                                        badge_width: 112px;
-                                    }
-
-                                    Button {
-                                        text: "Nouvelle fiche";
-                                        clicked => { root.clear_worker_form(); }
-                                    }
-                                }
-
-                                if root.worker_rows.length == 0 : Rectangle {
-                                    vertical-stretch: 1;
-                                    border-radius: 18px;
-                                    border-width: 1px;
-                                    border-color: #dde4dd;
-                                    background: #fafbfa;
-
-                                    VerticalBox {
-                                        padding: 22px;
-                                        alignment: center;
-                                        spacing: 8px;
-
-                                        Text {
-                                            text: "Aucune fiche effectif";
-                                            color: #224035;
-                                            font-size: 18px;
-                                            font-weight: 700;
-                                            horizontal-alignment: center;
-                                        }
-
-                                        Text {
-                                            text: "Creez la premiere fiche pour alimenter le planning et les affectations.";
-                                            color: #738378;
-                                            wrap: word-wrap;
-                                            font-size: 12px;
-                                            horizontal-alignment: center;
-                                        }
-
-                                        Button {
-                                            text: "Creer une fiche";
-                                            clicked => { root.clear_worker_form(); }
-                                        }
-                                    }
-                                }
-
-                                if root.worker_rows.length > 0 : ScrollView {
-                                    horizontal-stretch: 1;
-                                    vertical-stretch: 1;
-
-                                    VerticalBox {
-                                        spacing: 8px;
-
-                                        for worker in root.worker_rows : WorkerListItem {
-                                            worker_data: worker;
-                                            selected: root.worker_form_id == worker.id;
-                                            activated(worker_id) => { root.select_worker(worker_id); }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        Rectangle {
-                            min-width: 432px;
-                            preferred-width: 432px;
-                            vertical-stretch: 1;
-                            border-radius: 20px;
-                            border-width: 1px;
-                            border-color: #d7dfd7;
-                            background: #f3f6f3;
-
-                            VerticalBox {
-                                padding: 18px;
-                                spacing: 14px;
-
-                                HorizontalBox {
-                                    spacing: 8px;
-
-                                    Text {
-                                        text: "Fiche effectif";
-                                        color: #1d342b;
-                                        font-size: 20px;
-                                        font-weight: 700;
-                                    }
-
-                                    Rectangle { horizontal-stretch: 1; background: transparent; }
-
-                                    SurfaceBadge {
-                                        text: root.worker_form_existing ? "Edition" : "Creation";
-                                        accent: root.worker_form_existing;
-                                        warning: false;
-                                        badge_width: 112px;
-                                    }
-                                }
-
-                                ScrollView {
-                                    horizontal-stretch: 1;
-                                    vertical-stretch: 1;
-
-                                    VerticalBox {
-                                        spacing: 14px;
-
-                                        Rectangle {
-                                            border-radius: 18px;
-                                            border-width: 1px;
-                                            border-color: #d7dfd7;
-                                            background: #fbfcfb;
-
-                                            VerticalBox {
-                                                padding: 14px;
-                                                spacing: 10px;
-
-                                                HorizontalBox {
-                                                    spacing: 12px;
-
-                                                    VerticalBox {
-                                                        spacing: 4px;
-                                                        horizontal-stretch: 1;
-
-                                                        FieldLabel { text: "Identifiant interne"; }
-                                                        Text {
-                                                            text: root.worker_form_identifier_label;
-                                                            color: #244136;
-                                                            wrap: word-wrap;
-                                                            font-size: 12px;
-                                                            font-weight: root.worker_form_existing ? 600 : 500;
-                                                        }
-                                                    }
-
-                                                    VerticalBox {
-                                                        spacing: 4px;
-
-                                                        FieldLabel { text: "Etat"; }
-                                                        SurfaceBadge {
-                                                            text: root.can_save_worker ? "Pret a enregistrer" : "Edition incomplete";
-                                                            accent: root.can_save_worker;
-                                                            warning: !root.can_save_worker;
-                                                            badge_width: 156px;
-                                                        }
-                                                    }
-                                                }
-
-                                                Text {
-                                                    text: root.worker_form_validation_label;
-                                                    color: #627368;
-                                                    wrap: word-wrap;
-                                                    font-size: 11px;
-                                                }
-                                            }
-                                        }
-
-                                        Rectangle {
-                                            border-radius: 18px;
-                                            border-width: 1px;
-                                            border-color: #d7dfd7;
-                                            background: #fbfcfb;
-
-                                            VerticalBox {
-                                                padding: 14px;
-                                                spacing: 10px;
-
-                                                Text { text: "Identite"; color: #234035; font-size: 15px; font-weight: 700; }
-
-                                                FieldLabel { text: "Nom"; }
-                                                worker_last_name_edit := LineEdit {
-                                                    text <=> root.worker_form_last_name;
-                                                    accessible-label: "Nom";
-                                                    accessible-placeholder-text: "Nom";
-                                                }
-
-                                                FieldLabel { text: "Prenom"; }
-                                                worker_first_name_edit := LineEdit {
-                                                    text <=> root.worker_form_first_name;
-                                                    accessible-label: "Prenom";
-                                                    accessible-placeholder-text: "Prenom";
-                                                }
-                                            }
-                                        }
-
-                                        Rectangle {
-                                            border-radius: 18px;
-                                            border-width: 1px;
-                                            border-color: #d7dfd7;
-                                            background: #fbfcfb;
-
-                                            VerticalBox {
-                                                padding: 14px;
-                                                spacing: 10px;
-
-                                                Text { text: "Poste"; color: #234035; font-size: 15px; font-weight: 700; }
-
-                                                FieldLabel { text: "Poste principal"; }
-                                                worker_role_combo := ComboBox {
-                                                    model: root.role_options;
-                                                    current-index <=> root.worker_form_role_index;
-                                                    accessible-label: "Poste";
-                                                }
-
-                                                FieldLabel { text: "Ajouter un poste au catalogue"; }
-                                                HorizontalBox {
-                                                    spacing: 8px;
-
-                                                    new_role_edit := LineEdit {
-                                                        horizontal-stretch: 1;
-                                                        text <=> root.new_role_name;
-                                                        accessible-label: "Nouveau poste";
-                                                        accessible-placeholder-text: "Nom du poste";
-                                                    }
-
-                                                    Button {
-                                                        text: "Ajouter";
-                                                        enabled: root.can_add_job_role;
-                                                        clicked => { root.add_job_role(new_role_edit.text); }
-                                                    }
-                                                }
-
-                                                Text {
-                                                    text: "Les doublons nom/prenom sont bloques par le service metier et l'identifiant reste stable.";
-                                                    color: #718177;
-                                                    wrap: word-wrap;
-                                                    font-size: 11px;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Rectangle {
-                                    border-radius: 12px;
-                                    border-width: 1px;
-                                    border-color: root.worker_delete_confirmation_pending ? #c9b48f : #d7dfd7;
-                                    background: root.worker_delete_confirmation_pending ? #f7efe0 : #fbfcfb;
-
-                                    VerticalBox {
-                                        padding: 14px;
-                                        spacing: 10px;
-
-                                        Text {
-                                            text: root.worker_form_action_hint_label;
-                                            color: root.can_save_worker ? #4f6257 : #627368;
-                                            wrap: word-wrap;
-                                            font-size: 11px;
-                                        }
-
-                                        Button {
-                                            text: "Enregistrer la fiche";
-                                            enabled: root.can_save_worker;
-                                            clicked => {
-                                                root.save_worker(
-                                                    root.worker_form_id,
-                                                    root.worker_form_last_name,
-                                                    root.worker_form_first_name,
-                                                    root.worker_form_role_index
-                                                );
-                                            }
-                                        }
-
-                                        HorizontalBox {
-                                            spacing: 8px;
-
-                                            Button {
-                                                text: "Nouvelle fiche";
-                                                clicked => { root.clear_worker_form(); }
-                                            }
-
-                                            if !root.worker_delete_confirmation_pending : Button {
-                                                text: "Supprimer";
-                                                enabled: root.can_delete_worker;
-                                                clicked => { root.request_worker_delete_confirmation(); }
-                                            }
-
-                                            if root.worker_delete_confirmation_pending : Button {
-                                                text: "Annuler";
-                                                clicked => { root.cancel_worker_delete_confirmation(); }
-                                            }
-
-                                            if root.worker_delete_confirmation_pending : Button {
-                                                text: "Confirmer";
-                                                clicked => { root.delete_worker(root.worker_form_id); }
-                                            }
-                                        }
-
-                                        if root.worker_delete_confirmation_pending : Text {
-                                            text: "Je confirme la suppression de cette fiche. Cette action est irreversible.";
-                                            color: #624b26;
-                                            wrap: word-wrap;
-                                            font-size: 11px;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if root.current_page == 1 : VerticalBox {
-                    spacing: 18px;
-                    vertical-stretch: 1;
-
-                    Rectangle {
-                        min-height: 224px;
-                        preferred-height: 224px;
-                        max-height: 224px;
-                        border-radius: 22px;
-                        border-width: 1px;
-                        border-color: #d6dfd6;
-                        background: #eef4ef;
-
-                        VerticalBox {
-                            padding: 18px;
-                            spacing: 14px;
-
-                            HorizontalBox {
-                                spacing: 18px;
-
-                                VerticalBox {
-                                    spacing: 6px;
-                                    horizontal-stretch: 1.2;
-
-                                    Text {
-                                        text: "Planning mensuel";
-                                        color: #193028;
-                                        font-size: 24px;
-                                        font-weight: 700;
-                                    }
-
-                                    Text {
-                                        text: "Je pilote le mois, je repere rapidement les horaires et je garde l'affectation active dans le panneau de droite.";
-                                        color: #5f7266;
-                                        wrap: word-wrap;
-                                        font-size: 12px;
-                                    }
-
-                                    HorizontalBox {
-                                        spacing: 8px;
-
-                                        SurfaceBadge {
-                                            text: root.planning_rows.length > 0 ? "Mois charge" : "Aucun effectif";
-                                            accent: root.planning_rows.length > 0;
-                                            warning: false;
-                                            badge_width: 124px;
-                                        }
-
-                                        SurfaceBadge {
-                                            text: root.assignment_day > 0 ? "Cellule active" : "Sans selection";
-                                            accent: root.assignment_day > 0;
-                                            warning: false;
-                                            badge_width: 132px;
-                                        }
-                                    }
-                                }
-
-                                MetricTile {
-                                    label: "Effectifs";
-                                    value: "" + root.planning_rows.length;
-                                    helper: "lignes du mois";
-                                }
-
-                                MetricTile {
-                                    label: "Jours";
-                                    value: "" + root.total_days;
-                                    helper: root.planning_period_label;
-                                }
-
-                                MetricTile {
-                                    label: "Selection";
-                                    value: root.assignment_day > 0 ? "" + root.assignment_day : "-";
-                                    helper: root.assignment_day > 0 ? "jour actif" : "aucune cellule";
-                                }
-                            }
-
-                            HorizontalBox {
-                                spacing: 10px;
-
-                                ShiftLegendItem { short_code: "N"; label: "Nuit"; time_range: "21h00 - 05h00"; style_token: "night-blue"; }
-                                ShiftLegendItem { short_code: "A"; label: "Apres-midi"; time_range: "13h00 - 21h00"; style_token: "afternoon-red"; }
-                                ShiftLegendItem { short_code: "M"; label: "Matin"; time_range: "05h00 - 13h00"; style_token: "morning-yellow"; }
-                                ShiftLegendItem { short_code: "J"; label: "Journee"; time_range: "08h30 - 16h30"; style_token: "day-beige"; }
-                            }
-                        }
-                    }
-
-                    HorizontalBox {
-                        spacing: 18px;
-                        vertical-stretch: 1;
-
-                        Rectangle {
-                            horizontal-stretch: 1.95;
-                            vertical-stretch: 1;
-                            border-radius: 20px;
-                            border-width: 1px;
-                            border-color: #d7dfd7;
-                            background: #f3f6f3;
-
-                            VerticalBox {
-                                padding: 18px;
-                                spacing: 14px;
-
-                                HorizontalBox {
-                                    spacing: 10px;
-
-                                    VerticalBox {
-                                        spacing: 4px;
-                                        horizontal-stretch: 1;
-
-                                        Text {
-                                            text: "Grille de planning";
-                                            color: #1d342b;
-                                            font-size: 20px;
-                                            font-weight: 700;
-                                        }
-
-                                        Text {
-                                            text: root.planning_workspace_helper_label;
-                                            color: #66786d;
-                                            font-size: 12px;
-                                        }
-                                    }
-
-                                    SurfaceBadge {
-                                        text: root.planning_period_label;
-                                        accent: true;
-                                        warning: false;
-                                        badge_width: 160px;
-                                    }
-
-                                    Button {
-                                        text: "Recharger";
-                                        clicked => { root.load_month(root.selected_year, root.selected_month); }
-                                    }
-                                }
-
-                                Rectangle {
-                                    min-height: 76px;
-                                    max-height: 76px;
-                                    border-radius: 18px;
-                                    border-width: 1px;
-                                    border-color: #d7dfd7;
-                                    background: #eef3ef;
-
-                                    HorizontalBox {
-                                        padding: 14px;
-                                        spacing: 10px;
-
-                                        VerticalBox {
-                                            spacing: 4px;
-                                            horizontal-stretch: 1;
-
-                                            Text {
-                                                text: root.planning_period_label;
-                                                color: #1c342a;
-                                                font-size: 18px;
-                                                font-weight: 700;
-                                            }
-
-                                            Text {
-                                                text: "Je navigue dans le mois et je clique sur une cellule pour charger l'affectation a droite.";
-                                                color: #617469;
-                                                font-size: 11px;
-                                                wrap: word-wrap;
-                                            }
-                                        }
-
-                                        Button {
-                                            text: "Precedent";
-                                            min-width: 96px;
-                                            accessible-label: "Mois precedent";
-                                            clicked => { root.previous_month(); }
-                                        }
-
-                                        Button {
-                                            text: "Suivant";
-                                            min-width: 96px;
-                                            accessible-label: "Mois suivant";
-                                            clicked => { root.next_month(); }
-                                        }
-                                    }
-                                }
-
-                                Rectangle {
-                                    vertical-stretch: 1;
-                                    border-radius: 18px;
-                                    border-width: 1px;
-                                    border-color: #d9e1da;
-                                    background: #edf2ee;
-
-                                    VerticalBox {
-                                        padding: 12px;
-                                        spacing: 10px;
-
-                                        HorizontalBox {
-                                            spacing: 10px;
-
-                                            Text {
-                                                text: "Les cases vides restent modifiables. Les en-tetes du week-end sont legerement differencies pour lire le mois plus vite.";
-                                                color: #65776c;
-                                                font-size: 11px;
-                                                wrap: word-wrap;
-                                                horizontal-stretch: 1;
-                                            }
-
-                                            SurfaceBadge {
-                                                text: root.assignment_day > 0
-                                                    ? (root.assignment_existing
-                                                        ? "Affectation existante"
-                                                        : (root.can_save_assignment ? "Pret a enregistrer" : "Creneau libre"))
-                                                    : "Aucune selection";
-                                                accent: root.assignment_existing;
-                                                warning: root.assignment_day > 0 && !root.assignment_existing;
-                                                badge_width: 188px;
-                                            }
-                                        }
-
-                                        if root.planning_rows.length == 0 : Rectangle {
-                                            vertical-stretch: 1;
-                                            border-radius: 18px;
-                                            border-width: 1px;
-                                            border-color: #dde4dd;
-                                            background: #fafbfa;
-
-                                            VerticalBox {
-                                                padding: 22px;
-                                                alignment: center;
-                                                spacing: 8px;
-
-                                                Text {
-                                                    text: "Aucun effectif a planifier";
-                                                    color: #224035;
-                                                    font-size: 18px;
-                                                    font-weight: 700;
-                                                    horizontal-alignment: center;
-                                                }
-
-                                                Text {
-                                                    text: "Je cree d'abord des fiches effectif pour afficher une vraie grille mensuelle exploitable.";
-                                                    color: #738378;
-                                                    wrap: word-wrap;
-                                                    font-size: 12px;
-                                                    horizontal-alignment: center;
-                                                }
-                                            }
-                                        }
-
-                                        if root.planning_rows.length > 0 : ScrollView {
-                                            horizontal-stretch: 1;
-                                            vertical-stretch: 1;
-
-                                            VerticalBox {
-                                                spacing: 6px;
-
-                                                HorizontalBox {
-                                                    spacing: 6px;
-
-                                                    Rectangle {
-                                                        min-width: 228px;
-                                                        preferred-width: 228px;
-                                                        min-height: 60px;
-                                                        border-radius: 14px;
-                                                        border-width: 1px;
-                                                        border-color: #d7dfd7;
-                                                        background: #e9efe9;
-
-                                                        VerticalBox {
-                                                            alignment: center;
-                                                            spacing: 2px;
-
-                                                            Text {
-                                                                text: "Effectif";
-                                                                color: #244136;
-                                                                horizontal-alignment: center;
-                                                                font-weight: 700;
-                                                            }
-
-                                                            Text {
-                                                                text: "poste et selection";
-                                                                color: #6a7d72;
-                                                                horizontal-alignment: center;
-                                                                font-size: 10px;
-                                                            }
-                                                        }
-                                                    }
-
-                                                    for header in root.day_headers : Rectangle {
-                                                        min-width: 62px;
-                                                        preferred-width: 62px;
-                                                        min-height: 60px;
-                                                        border-radius: 14px;
-                                                        border-width: 1px;
-                                                        border-color: header.is_weekend ? #cfd9d0 : #d7dfd7;
-                                                        background: header.is_weekend ? #e4ebe5 : #e9efe9;
-
-                                                        VerticalBox {
-                                                            alignment: center;
-                                                            spacing: 2px;
-
-                                                            Text {
-                                                                text: header.weekday_label;
-                                                                color: #698074;
-                                                                horizontal-alignment: center;
-                                                                font-size: 10px;
-                                                                font-weight: 600;
-                                                            }
-
-                                                            Text {
-                                                                text: header.label;
-                                                                color: #244136;
-                                                                horizontal-alignment: center;
-                                                                font-size: 14px;
-                                                                font-weight: 700;
-                                                            }
-                                                        }
-                                                    }
-                                                }
-
-                                                for row[row_index] in root.planning_rows : HorizontalBox {
-                                                    spacing: 6px;
-
-                                                    Rectangle {
-                                                        min-width: 228px;
-                                                        preferred-width: 228px;
-                                                        min-height: 62px;
-                                                        preferred-height: 62px;
-                                                        max-height: 62px;
-                                                        border-radius: 14px;
-                                                        border-width: row_index == root.assignment_worker_index ? 2px : 1px;
-                                                        border-color: row_index == root.assignment_worker_index ? #7ea08a : #dde4dd;
-                                                        background: row_index == root.assignment_worker_index ? #e3eee6 : #fbfcfb;
-
-                                                        HorizontalBox {
-                                                            padding: 10px;
-                                                            spacing: 10px;
-
-                                                            Rectangle {
-                                                                min-width: 4px;
-                                                                max-width: 4px;
-                                                                border-radius: 2px;
-                                                                background: row_index == root.assignment_worker_index ? #4f755d : transparent;
-                                                            }
-
-                                                            VerticalBox {
-                                                                alignment: center;
-                                                                spacing: 2px;
-                                                                horizontal-stretch: 1;
-
-                                                                Text {
-                                                                    text: row.worker_name;
-                                                                    color: #1c3229;
-                                                                    font-size: 14px;
-                                                                    font-weight: 700;
-                                                                }
-
-                                                                Text {
-                                                                    text: row.job_role_label;
-                                                                    color: #6c7e73;
-                                                                    font-size: 11px;
-                                                                    wrap: word-wrap;
-                                                                }
-                                                            }
-
-                                                            if row_index == root.assignment_worker_index : SurfaceBadge {
-                                                                text: "Actif";
-                                                                accent: true;
-                                                                warning: false;
-                                                                badge_width: 72px;
-                                                            }
-                                                        }
-                                                    }
-
-                                                    for cell in row.cells : PlanningCellView {
-                                                        cell_data: cell;
-                                                        worker_id: row.worker_id;
-                                                        worker_name: row.worker_name;
-                                                        active: row_index == root.assignment_worker_index && root.assignment_day == cell.day;
-                                                        selected(worker_id, day) => { root.select_cell(worker_id, day); }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                        }
-                    }
-
-                    Rectangle {
-                        min-width: 424px;
-                        preferred-width: 424px;
-                        vertical-stretch: 1;
-                        border-radius: 20px;
-                        border-width: 1px;
-                        border-color: #d7dfd7;
-                        background: #f3f6f3;
-
-                        VerticalBox {
-                            padding: 18px;
-                            spacing: 14px;
-
-                            HorizontalBox {
-                                spacing: 8px;
-
-                                Text {
-                                    text: "Inspecteur d'affectation";
-                                    color: #1d342b;
-                                    font-size: 20px;
-                                    font-weight: 700;
-                                }
-
-                                Rectangle { horizontal-stretch: 1; background: transparent; }
-
-                                SurfaceBadge {
-                                    text: root.assignment_day > 0
-                                        ? (root.assignment_existing
-                                            ? "Affecte"
-                                            : (root.can_save_assignment ? "Pret a enregistrer" : "A preparer"))
-                                        : "En attente";
-                                    accent: root.assignment_existing;
-                                    warning: root.assignment_day > 0 && !root.assignment_existing;
-                                    badge_width: 120px;
-                                }
-                            }
 
                             ScrollView {
                                 horizontal-stretch: 1;
                                 vertical-stretch: 1;
 
                                 VerticalBox {
-                                    spacing: 14px;
+                                    padding: 16px;
+                                    spacing: 16px;
 
                                     Rectangle {
                                         border-radius: 18px;
@@ -1496,227 +758,928 @@ export component AppWindow inherits Window {
                                         VerticalBox {
                                             padding: 14px;
                                             spacing: 10px;
+
+                                            Text {
+                                                text: "Generation automatique";
+                                                color: #234035;
+                                                font-size: 16px;
+                                                font-weight: 700;
+                                            }
+
+                                            FieldLabel { text: "Date de debut"; }
+                                            LineEdit {
+                                                text <=> root.planning_start_date;
+                                                accessible-label: "Date de debut";
+                                            }
+
+                                            FieldLabel { text: "Nombre de jours"; }
+                                            LineEdit {
+                                                text <=> root.planning_days;
+                                                accessible-label: "Nombre de jours";
+                                            }
+
+                                            Button {
+                                                text: "Generer planning";
+                                                enabled: root.can_generate_planning;
+                                                clicked => {
+                                                    root.generate_planning(root.planning_start_date, root.planning_days);
+                                                }
+                                            }
+
+                                            Text {
+                                                text: "Exemple : 90 pour preparer les 90 prochains jours. Le calcul respecte la rotation hebdomadaire des equipes.";
+                                                color: #6b7c72;
+                                                font-size: 11px;
+                                                wrap: word-wrap;
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        border-radius: 18px;
+                                        border-width: 1px;
+                                        border-color: #d7dfd7;
+                                        background: #fbfcfb;
+
+                                        VerticalBox {
+                                            padding: 14px;
+                                            spacing: 10px;
+
+                                            Text {
+                                                text: "Correction manuelle";
+                                                color: #234035;
+                                                font-size: 16px;
+                                                font-weight: 700;
+                                            }
+
+                                            Text {
+                                                text: root.selected_cell_summary;
+                                                color: #6b7c72;
+                                                font-size: 11px;
+                                                wrap: word-wrap;
+                                            }
+
+                                            FieldLabel { text: "Nouvelle plage horaire"; }
+                                            manual_shift_combo := ComboBox {
+                                                model: root.active_shift_slot_options;
+                                                current-index <=> root.manual_shift_index;
+                                                accessible-label: "Plage horaire manuelle";
+                                            }
+
+                                            Button {
+                                                text: "Affecter manuellement";
+                                                enabled: root.can_save_manual_assignment;
+                                                clicked => {
+                                                    root.save_manual_assignment(root.selected_cell_worker_id, root.selected_cell_date, manual_shift_combo.current-index);
+                                                }
+                                            }
+
+                                            Button {
+                                                text: "Marquer sans poste";
+                                                enabled: root.has_selected_cell;
+                                                clicked => {
+                                                    root.mark_manual_off(root.selected_cell_worker_id, root.selected_cell_date);
+                                                }
+                                            }
+
+                                            Button {
+                                                text: "Revenir a l'automatique";
+                                                enabled: root.has_selected_cell;
+                                                clicked => {
+                                                    root.clear_manual_override(root.selected_cell_worker_id, root.selected_cell_date);
+                                                }
+                                            }
+
+                                            Button {
+                                                text: "Effacer la selection";
+                                                enabled: root.has_selected_cell;
+                                                clicked => { root.clear_planning_selection(); }
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        border-radius: 18px;
+                                        border-width: 1px;
+                                        border-color: #d7dfd7;
+                                        background: #fbfcfb;
+
+                                        VerticalBox {
+                                            padding: 14px;
+                                            spacing: 8px;
+
+                                            Text {
+                                                text: "Legende";
+                                                color: #234035;
+                                                font-size: 16px;
+                                                font-weight: 700;
+                                            }
+
+                                            Text {
+                                                text: "Bordure verte = correction manuelle. OFF = poste retire manuellement.";
+                                                color: #6b7c72;
+                                                font-size: 11px;
+                                                wrap: word-wrap;
+                                            }
 
                                             HorizontalBox {
                                                 spacing: 8px;
 
-                                                Text {
-                                                    text: "Resume de cellule";
-                                                    color: #234035;
-                                                    font-size: 15px;
-                                                    font-weight: 700;
-                                                }
-
-                                                Rectangle { horizontal-stretch: 1; background: transparent; }
-
-                                                SurfaceBadge {
-                                                    text: root.assignment_day > 0
-                                                        ? (root.assignment_existing
-                                                            ? "Affectation existante"
-                                                            : (root.can_save_assignment ? "Pret a enregistrer" : "Creneau libre"))
-                                                        : "Aucune selection";
-                                                    accent: root.assignment_existing;
-                                                    warning: root.assignment_day > 0 && !root.assignment_existing;
-                                                    badge_width: 192px;
-                                                }
-                                            }
-
-                                            Text {
-                                                text: root.assignment_summary != ""
-                                                    ? root.assignment_summary
-                                                    : "Je selectionne une cellule dans la grille pour preparer ou modifier une affectation.";
-                                                color: #2f4d40;
-                                                wrap: word-wrap;
-                                                font-size: 12px;
-                                            }
-                                        }
-                                    }
-
-                                    Rectangle {
-                                        border-radius: 18px;
-                                        border-width: 1px;
-                                        border-color: #d7dfd7;
-                                        background: #fbfcfb;
-
-                                        VerticalBox {
-                                            padding: 14px;
-                                            spacing: 10px;
-
-                                            HorizontalBox {
-                                                spacing: 12px;
-
-                                                VerticalBox {
-                                                    spacing: 4px;
-                                                    horizontal-stretch: 1;
-
-                                                    FieldLabel { text: "Cellule active"; }
-                                                    Text {
-                                                        text: root.planning_selection_label;
-                                                        color: #244136;
-                                                        wrap: word-wrap;
-                                                        font-size: 12px;
-                                                        font-weight: 600;
-                                                    }
-                                                }
-
-                                                VerticalBox {
-                                                    spacing: 4px;
-
-                                                    FieldLabel { text: "Etat"; }
-                                                    SurfaceBadge {
-                                                        text: root.assignment_day > 0
-                                                            ? (root.assignment_existing
-                                                                ? "Affectation existante"
-                                                                : (root.can_save_assignment ? "Pret a enregistrer" : "Creneau libre"))
-                                                            : "Aucune selection";
-                                                        accent: root.assignment_existing;
-                                                        warning: root.assignment_day > 0 && !root.assignment_existing;
-                                                        badge_width: 188px;
-                                                    }
-                                                }
-                                            }
-
-                                            Text {
-                                                text: root.planning_selection_state_label;
-                                                color: #627368;
-                                                wrap: word-wrap;
-                                                font-size: 11px;
-                                            }
-                                        }
-                                    }
-
-                                    Rectangle {
-                                        border-radius: 18px;
-                                        border-width: 1px;
-                                        border-color: #d7dfd7;
-                                        background: #fbfcfb;
-
-                                        VerticalBox {
-                                            padding: 14px;
-                                            spacing: 10px;
-
-                                            Text {
-                                                text: "Preparation";
-                                                color: #234035;
-                                                font-size: 15px;
-                                                font-weight: 700;
-                                            }
-
-                                            FieldLabel { text: "Effectif"; }
-                                            assignment_worker_combo := ComboBox {
-                                                model: root.assignment_worker_options;
-                                                current-index <=> root.assignment_worker_index;
-                                                enabled: !root.assignment_delete_confirmation_pending;
-                                                accessible-label: "Effectif de l'affectation";
-                                                selected(_) => { root.assignment_worker_changed(assignment_worker_combo.current-index); }
-                                            }
-
-                                            FieldLabel { text: "Jour"; }
-                                            Rectangle {
-                                                min-height: 44px;
-                                                border-radius: 12px;
-                                                border-width: 1px;
-                                                border-color: #dde4dd;
-                                                background: #f7f9f7;
-
-                                                Text {
-                                                    text: root.planning_selection_label;
-                                                    color: #2b4439;
-                                                    vertical-alignment: center;
-                                                    x: 12px;
-                                                    width: parent.width - 24px;
-                                                    height: parent.height;
-                                                    font-size: 12px;
-                                                }
-                                            }
-
-                                            FieldLabel { text: "Horaire"; }
-                                            assignment_shift_combo := ComboBox {
-                                                model: root.shift_options;
-                                                current-index <=> root.assignment_shift_index;
-                                                enabled: !root.assignment_delete_confirmation_pending;
-                                                accessible-label: "Horaire de l'affectation";
-                                                selected(_) => { root.assignment_shift_changed(assignment_shift_combo.current-index); }
+                                                PlanningShiftCell { cell: { day_offset: 0, short_code: "M", label: "Matin", time_range: "05h00 - 13h00", style_token: "morning-yellow", has_assignment: true, is_manual: false, is_manual_off: false }; }
+                                                PlanningShiftCell { cell: { day_offset: 0, short_code: "A", label: "Apres-midi", time_range: "13h00 - 21h00", style_token: "afternoon-red", has_assignment: true, is_manual: false, is_manual_off: false }; }
+                                                PlanningShiftCell { cell: { day_offset: 0, short_code: "N", label: "Nuit", time_range: "21h00 - 05h00", style_token: "night-blue", has_assignment: true, is_manual: false, is_manual_off: false }; }
+                                                PlanningShiftCell { cell: { day_offset: 0, short_code: "OFF", label: "Sans poste", time_range: "", style_token: "off-gray", has_assignment: false, is_manual: true, is_manual_off: true }; }
                                             }
                                         }
                                     }
                                 }
                             }
+                        }
 
-                            Rectangle {
-                                border-radius: 12px;
-                                border-width: 1px;
-                                border-color: root.assignment_delete_confirmation_pending ? #c9b48f : #d7dfd7;
-                                background: root.assignment_delete_confirmation_pending ? #f7efe0 : #fbfcfb;
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            vertical-stretch: 1;
+                            border-radius: 20px;
+                            border-width: 1px;
+                            border-color: #d7dfd7;
+                            background: #f3f6f3;
+
+                            if root.planning_rows.length > 0 : ScrollView {
+                                horizontal-stretch: 1;
+                                vertical-stretch: 1;
 
                                 VerticalBox {
                                     padding: 14px;
-                                    spacing: 10px;
-
-                                    Text {
-                                        text: root.planning_assignment_action_hint_label;
-                                        color: root.can_save_assignment ? #4f6257 : #627368;
-                                        wrap: word-wrap;
-                                        font-size: 11px;
-                                    }
-
-                                    Button {
-                                        text: "Enregistrer l'affectation";
-                                        enabled: root.can_save_assignment && !root.assignment_delete_confirmation_pending;
-                                        clicked => {
-                                            root.save_assignment(
-                                                assignment_worker_combo.current-index,
-                                                root.selected_year,
-                                                root.selected_month,
-                                                root.assignment_day,
-                                                assignment_shift_combo.current-index
-                                            );
-                                        }
-                                    }
+                                    spacing: 6px;
 
                                     HorizontalBox {
-                                        spacing: 8px;
+                                        spacing: 6px;
 
-                                        Button {
-                                            text: "Reinitialiser";
-                                            clicked => { root.clear_assignment_form(); }
+                                        Rectangle {
+                                            min-width: 250px;
+                                            preferred-width: 250px;
+                                            min-height: 62px;
+                                            border-radius: 14px;
+                                            border-width: 1px;
+                                            border-color: #d7dfd7;
+                                            background: #e9efe9;
+
+                                            VerticalBox {
+                                                alignment: center;
+                                                spacing: 2px;
+
+                                                Text {
+                                                    text: "Salarie";
+                                                    color: #244136;
+                                                    font-size: 13px;
+                                                    font-weight: 700;
+                                                    horizontal-alignment: center;
+                                                }
+
+                                                Text {
+                                                    text: "Equipe • role • poste";
+                                                    color: #6a7c71;
+                                                    font-size: 11px;
+                                                    horizontal-alignment: center;
+                                                }
+                                            }
                                         }
 
-                                        if !root.assignment_delete_confirmation_pending : Button {
-                                            text: "Supprimer";
-                                            enabled: root.can_delete_assignment;
-                                            clicked => { root.request_assignment_delete_confirmation(); }
-                                        }
+                                        for header in root.day_headers : Rectangle {
+                                            min-width: 72px;
+                                            preferred-width: 72px;
+                                            min-height: 62px;
+                                            border-radius: 12px;
+                                            border-width: 1px;
+                                            border-color: header.is_weekend ? #d7c49f : #d7dfd7;
+                                            background: header.is_weekend ? #f7efe0 : #fbfcfb;
 
-                                        if root.assignment_delete_confirmation_pending : Button {
-                                            text: "Annuler";
-                                            clicked => { root.cancel_assignment_delete_confirmation(); }
-                                        }
+                                            VerticalBox {
+                                                alignment: center;
+                                                spacing: 2px;
 
-                                        if root.assignment_delete_confirmation_pending : Button {
-                                            text: "Confirmer";
-                                            clicked => {
-                                                root.delete_assignment(
-                                                    assignment_worker_combo.current-index,
-                                                    root.selected_year,
-                                                    root.selected_month,
-                                                    root.assignment_day
-                                                );
+                                                Text {
+                                                    text: header.weekday_label;
+                                                    color: #6a7c71;
+                                                    font-size: 11px;
+                                                    font-weight: 700;
+                                                    horizontal-alignment: center;
+                                                }
+
+                                                Text {
+                                                    text: header.date_label;
+                                                    color: #244136;
+                                                    font-size: 14px;
+                                                    font-weight: 700;
+                                                    horizontal-alignment: center;
+                                                }
+
+                                                Text {
+                                                    text: header.month_label;
+                                                    color: #6a7c71;
+                                                    font-size: 10px;
+                                                    horizontal-alignment: center;
+                                                }
                                             }
                                         }
                                     }
 
-                                    if root.assignment_delete_confirmation_pending : Text {
-                                        text: "Je confirme la suppression de cette affectation. Cette action est irreversible.";
-                                        color: #624b26;
+                                    for row in root.planning_rows : HorizontalBox {
+                                        spacing: 6px;
+
+                                        Rectangle {
+                                            min-width: 250px;
+                                            preferred-width: 250px;
+                                            min-height: 62px;
+                                            border-radius: 14px;
+                                            border-width: 1px;
+                                            border-color: #dde4dd;
+                                            background: #fbfcfb;
+
+                                            VerticalBox {
+                                                padding: 10px;
+                                                spacing: 2px;
+
+                                                Text {
+                                                    text: row.worker_name;
+                                                    color: #183027;
+                                                    font-size: 13px;
+                                                    font-weight: 700;
+                                                    wrap: word-wrap;
+                                                }
+
+                                                Text {
+                                                    text: row.team_name + (row.team_role_label != "" ? " • " + row.team_role_label : "");
+                                                    color: #4f755d;
+                                                    font-size: 11px;
+                                                    wrap: word-wrap;
+                                                }
+
+                                                Text {
+                                                    text: row.job_role_label;
+                                                    color: #6b7c72;
+                                                    font-size: 11px;
+                                                    wrap: word-wrap;
+                                                }
+                                            }
+                                        }
+
+                                        for cell in row.cells : PlanningShiftCell {
+                                            cell: cell;
+                                            activated(offset) => { root.select_planning_cell(row.worker_id, offset); }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if root.planning_rows.length == 0 : Rectangle {
+                                background: transparent;
+                                VerticalBox {
+                                    alignment: center;
+                                    spacing: 8px;
+
+                                    Text {
+                                        text: "Aucun planning visible.";
+                                        color: #244136;
+                                        font-size: 18px;
+                                        font-weight: 700;
+                                    }
+
+                                    Text {
+                                        text: "Je genere d'abord une plage de jours, puis le tableau s'affiche ici.";
+                                        color: #6b7c72;
+                                        font-size: 12px;
                                         wrap: word-wrap;
-                                        font-size: 11px;
+                                        horizontal-alignment: center;
                                     }
                                 }
                             }
                         }
                     }
                 }
+
+                if root.current_page == 1 : HorizontalBox {
+                    spacing: 16px;
+                    vertical-stretch: 1;
+
+                    Rectangle {
+                        min-width: 340px;
+                        preferred-width: 340px;
+                        border-radius: 20px;
+                        border-width: 1px;
+                        border-color: #d7dfd7;
+                        background: #f3f6f3;
+
+                        VerticalBox {
+                            padding: 16px;
+                            spacing: 12px;
+
+                            HorizontalBox {
+                                spacing: 8px;
+                                Text {
+                                    text: "Equipes";
+                                    color: #234035;
+                                    font-size: 18px;
+                                    font-weight: 700;
+                                }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
+                                Button {
+                                    text: "Nouvelle equipe";
+                                    clicked => { root.clear_team_form(); }
+                                }
+                            }
+
+                            if root.team_rows.length > 0 : ScrollView {
+                                horizontal-stretch: 1;
+                                vertical-stretch: 1;
+
+                                VerticalBox {
+                                    spacing: 8px;
+
+                                    for team in root.team_rows : TeamListItem {
+                                        team_row: team;
+                                        selected: root.team_form_id == team.id;
+                                        activated(team_id) => { root.select_team(team_id); }
+                                    }
+                                }
+                            }
+
+                            if root.team_rows.length == 0 : Rectangle {
+                                vertical-stretch: 1;
+                                background: transparent;
+                                Text {
+                                    text: "Aucune equipe.";
+                                    color: #6b7c72;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        border-radius: 20px;
+                        border-width: 1px;
+                        border-color: #d7dfd7;
+                        background: #f3f6f3;
+
+                        ScrollView {
+                            horizontal-stretch: 1;
+                            vertical-stretch: 1;
+
+                            VerticalBox {
+                                padding: 16px;
+                                spacing: 16px;
+
+                                Rectangle {
+                                    border-radius: 18px;
+                                    border-width: 1px;
+                                    border-color: #d7dfd7;
+                                    background: #fbfcfb;
+
+                                    VerticalBox {
+                                        padding: 14px;
+                                        spacing: 10px;
+
+                                        Text {
+                                            text: root.team_existing ? "Modifier une equipe" : "Nouvelle equipe";
+                                            color: #234035;
+                                            font-size: 16px;
+                                            font-weight: 700;
+                                        }
+
+                                        FieldLabel { text: "Nom de l'equipe"; }
+                                        LineEdit {
+                                            text <=> root.team_name;
+                                            accessible-label: "Nom de l'equipe";
+                                        }
+
+                                        FieldLabel { text: "Poste de reference sur la semaine de depart"; }
+                                        ComboBox {
+                                            model: root.active_shift_slot_options;
+                                            current-index <=> root.team_anchor_shift_index;
+                                            accessible-label: "Poste de reference";
+                                        }
+
+                                        FieldLabel { text: "Etat"; }
+                                        ComboBox {
+                                            model: root.active_state_options;
+                                            current-index <=> root.team_active_index;
+                                            accessible-label: "Etat de l'equipe";
+                                        }
+
+                                        HorizontalBox {
+                                            spacing: 8px;
+
+                                            Button {
+                                                text: "Enregistrer l'equipe";
+                                                enabled: root.can_save_team;
+                                                clicked => {
+                                                    root.save_team(root.team_form_id, root.team_name, root.team_anchor_shift_index, root.team_active_index);
+                                                }
+                                            }
+
+                                            Button {
+                                                text: "Vider le formulaire";
+                                                clicked => { root.clear_team_form(); }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    border-radius: 18px;
+                                    border-width: 1px;
+                                    border-color: #d7dfd7;
+                                    background: #fbfcfb;
+
+                                    VerticalBox {
+                                        padding: 14px;
+                                        spacing: 10px;
+
+                                        Text {
+                                            text: "Membres de l'equipe";
+                                            color: #234035;
+                                            font-size: 16px;
+                                            font-weight: 700;
+                                        }
+
+                                        Text {
+                                            text: root.team_form_id == "" ? "Je selectionne d'abord une equipe pour gerer ses membres." : "Je conserve un seul chef d'equipe et un ou plusieurs operateurs.";
+                                            color: #6b7c72;
+                                            font-size: 11px;
+                                            wrap: word-wrap;
+                                        }
+
+                                        FieldLabel { text: "Salarie"; }
+                                        team_member_worker_combo := ComboBox {
+                                            model: root.team_member_candidate_options;
+                                            current-index <=> root.team_member_worker_index;
+                                            enabled: root.team_form_id != "";
+                                            accessible-label: "Salarie a ajouter";
+                                        }
+
+                                        FieldLabel { text: "Role dans l'equipe"; }
+                                        ComboBox {
+                                            model: root.team_member_role_options;
+                                            current-index <=> root.team_member_role_index;
+                                            enabled: root.team_form_id != "";
+                                            accessible-label: "Role dans l'equipe";
+                                        }
+
+                                        Button {
+                                            text: "Ajouter le membre";
+                                            enabled: root.can_add_team_member;
+                                            clicked => {
+                                                root.add_team_member(root.team_form_id, team_member_worker_combo.current-index, root.team_member_role_index);
+                                            }
+                                        }
+
+                                        if root.selected_team_member_rows.length > 0 : VerticalBox {
+                                            spacing: 8px;
+
+                                            for member in root.selected_team_member_rows : TeamMemberListItem {
+                                                member_row: member;
+                                                remove(worker_id) => { root.remove_team_member(root.team_form_id, worker_id); }
+                                            }
+                                        }
+
+                                        if root.selected_team_member_rows.length == 0 : Rectangle {
+                                            min-height: 52px;
+                                            border-radius: 12px;
+                                            border-width: 1px;
+                                            border-color: #dde5dd;
+                                            background: #f8faf8;
+
+                                            Text {
+                                                text: "Aucun membre sur cette equipe.";
+                                                color: #6b7c72;
+                                                vertical-alignment: center;
+                                                horizontal-alignment: center;
+                                                width: parent.width;
+                                                height: parent.height;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if root.current_page == 2 : HorizontalBox {
+                    spacing: 16px;
+                    vertical-stretch: 1;
+
+                    Rectangle {
+                        min-width: 340px;
+                        preferred-width: 340px;
+                        border-radius: 20px;
+                        border-width: 1px;
+                        border-color: #d7dfd7;
+                        background: #f3f6f3;
+
+                        VerticalBox {
+                            padding: 16px;
+                            spacing: 12px;
+
+                            HorizontalBox {
+                                spacing: 8px;
+                                Text {
+                                    text: "Plages horaires";
+                                    color: #234035;
+                                    font-size: 18px;
+                                    font-weight: 700;
+                                }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
+                                Button {
+                                    text: "Nouvelle plage";
+                                    clicked => { root.clear_shift_slot_form(); }
+                                }
+                            }
+
+                            if root.shift_slot_rows.length > 0 : ScrollView {
+                                horizontal-stretch: 1;
+                                vertical-stretch: 1;
+
+                                VerticalBox {
+                                    spacing: 8px;
+
+                                    for slot in root.shift_slot_rows : ShiftSlotListItem {
+                                        shift_slot_row: slot;
+                                        selected: root.shift_slot_form_id == slot.id;
+                                        activated(slot_id) => { root.select_shift_slot(slot_id); }
+                                    }
+                                }
+                            }
+
+                            if root.shift_slot_rows.length == 0 : Rectangle {
+                                vertical-stretch: 1;
+                                background: transparent;
+                                Text {
+                                    text: "Aucune plage horaire.";
+                                    color: #6b7c72;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        border-radius: 20px;
+                        border-width: 1px;
+                        border-color: #d7dfd7;
+                        background: #f3f6f3;
+
+                        ScrollView {
+                            horizontal-stretch: 1;
+                            vertical-stretch: 1;
+
+                            VerticalBox {
+                                padding: 16px;
+                                spacing: 16px;
+
+                                Rectangle {
+                                    border-radius: 18px;
+                                    border-width: 1px;
+                                    border-color: #d7dfd7;
+                                    background: #fbfcfb;
+
+                                    VerticalBox {
+                                        padding: 14px;
+                                        spacing: 10px;
+
+                                        Text {
+                                            text: root.shift_slot_existing ? "Modifier une plage horaire" : "Nouvelle plage horaire";
+                                            color: #234035;
+                                            font-size: 16px;
+                                            font-weight: 700;
+                                        }
+
+                                        FieldLabel { text: "Nom"; }
+                                        LineEdit { text <=> root.shift_slot_name; accessible-label: "Nom de la plage"; }
+
+                                        FieldLabel { text: "Code court"; }
+                                        LineEdit { text <=> root.shift_slot_code; accessible-label: "Code court"; }
+
+                                        HorizontalBox {
+                                            spacing: 12px;
+
+                                            VerticalBox {
+                                                spacing: 6px;
+                                                horizontal-stretch: 1;
+                                                FieldLabel { text: "Debut (heure)"; }
+                                                LineEdit { text <=> root.shift_slot_start_hour; accessible-label: "Heure de debut"; }
+                                            }
+
+                                            VerticalBox {
+                                                spacing: 6px;
+                                                horizontal-stretch: 1;
+                                                FieldLabel { text: "Debut (minute)"; }
+                                                LineEdit { text <=> root.shift_slot_start_minute; accessible-label: "Minute de debut"; }
+                                            }
+                                        }
+
+                                        HorizontalBox {
+                                            spacing: 12px;
+
+                                            VerticalBox {
+                                                spacing: 6px;
+                                                horizontal-stretch: 1;
+                                                FieldLabel { text: "Fin (heure)"; }
+                                                LineEdit { text <=> root.shift_slot_end_hour; accessible-label: "Heure de fin"; }
+                                            }
+
+                                            VerticalBox {
+                                                spacing: 6px;
+                                                horizontal-stretch: 1;
+                                                FieldLabel { text: "Fin (minute)"; }
+                                                LineEdit { text <=> root.shift_slot_end_minute; accessible-label: "Minute de fin"; }
+                                            }
+                                        }
+
+                                        FieldLabel { text: "Style visuel"; }
+                                        ComboBox {
+                                            model: root.shift_style_options;
+                                            current-index <=> root.shift_slot_style_index;
+                                            accessible-label: "Style visuel";
+                                        }
+
+                                        FieldLabel { text: "Etat"; }
+                                        ComboBox {
+                                            model: root.active_state_options;
+                                            current-index <=> root.shift_slot_active_index;
+                                            accessible-label: "Etat de la plage";
+                                        }
+
+                                        HorizontalBox {
+                                            spacing: 8px;
+
+                                            Button {
+                                                text: "Enregistrer la plage";
+                                                enabled: root.can_save_shift_slot;
+                                                clicked => {
+                                                    root.save_shift_slot(
+                                                        root.shift_slot_form_id,
+                                                        root.shift_slot_name,
+                                                        root.shift_slot_code,
+                                                        root.shift_slot_start_hour,
+                                                        root.shift_slot_start_minute,
+                                                        root.shift_slot_end_hour,
+                                                        root.shift_slot_end_minute,
+                                                        root.shift_slot_style_index,
+                                                        root.shift_slot_active_index
+                                                    );
+                                                }
+                                            }
+
+                                            Button {
+                                                text: "Vider le formulaire";
+                                                clicked => { root.clear_shift_slot_form(); }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    border-radius: 18px;
+                                    border-width: 1px;
+                                    border-color: #d7dfd7;
+                                    background: #fbfcfb;
+
+                                    VerticalBox {
+                                        padding: 14px;
+                                        spacing: 10px;
+
+                                        Text {
+                                            text: "Cycle hebdomadaire 3x8";
+                                            color: #234035;
+                                            font-size: 16px;
+                                            font-weight: 700;
+                                        }
+
+                                        Text {
+                                            text: "Je definis la semaine de reference puis l'ordre des 3 postes qui tournent de semaine en semaine.";
+                                            color: #6b7c72;
+                                            font-size: 11px;
+                                            wrap: word-wrap;
+                                        }
+
+                                        FieldLabel { text: "Debut de semaine de reference (lundi)"; }
+                                        LineEdit { text <=> root.rotation_reference_week_start; accessible-label: "Debut de semaine de reference"; }
+
+                                        FieldLabel { text: "Semaine 1"; }
+                                        ComboBox {
+                                            model: root.active_shift_slot_options;
+                                            current-index <=> root.rotation_week_one_shift_index;
+                                            accessible-label: "Semaine 1";
+                                        }
+
+                                        FieldLabel { text: "Semaine 2"; }
+                                        ComboBox {
+                                            model: root.active_shift_slot_options;
+                                            current-index <=> root.rotation_week_two_shift_index;
+                                            accessible-label: "Semaine 2";
+                                        }
+
+                                        FieldLabel { text: "Semaine 3"; }
+                                        ComboBox {
+                                            model: root.active_shift_slot_options;
+                                            current-index <=> root.rotation_week_three_shift_index;
+                                            accessible-label: "Semaine 3";
+                                        }
+
+                                        Button {
+                                            text: "Enregistrer le cycle";
+                                            clicked => {
+                                                root.save_rotation_cycle(
+                                                    root.rotation_reference_week_start,
+                                                    root.rotation_week_one_shift_index,
+                                                    root.rotation_week_two_shift_index,
+                                                    root.rotation_week_three_shift_index
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if root.current_page == 3 : HorizontalBox {
+                    spacing: 16px;
+                    vertical-stretch: 1;
+
+                    Rectangle {
+                        min-width: 340px;
+                        preferred-width: 340px;
+                        border-radius: 20px;
+                        border-width: 1px;
+                        border-color: #d7dfd7;
+                        background: #f3f6f3;
+
+                        VerticalBox {
+                            padding: 16px;
+                            spacing: 12px;
+
+                            HorizontalBox {
+                                spacing: 8px;
+                                Text {
+                                    text: "Salaries";
+                                    color: #234035;
+                                    font-size: 18px;
+                                    font-weight: 700;
+                                }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
+                                Button {
+                                    text: "Nouvelle fiche";
+                                    clicked => { root.clear_worker_form(); }
+                                }
+                            }
+
+                            if root.worker_rows.length > 0 : ScrollView {
+                                horizontal-stretch: 1;
+                                vertical-stretch: 1;
+
+                                VerticalBox {
+                                    spacing: 8px;
+
+                                    for worker in root.worker_rows : WorkerListItem {
+                                        worker_row: worker;
+                                        selected: root.worker_form_id == worker.id;
+                                        activated(worker_id) => { root.select_worker(worker_id); }
+                                    }
+                                }
+                            }
+
+                            if root.worker_rows.length == 0 : Rectangle {
+                                vertical-stretch: 1;
+                                background: transparent;
+                                Text {
+                                    text: "Aucun salarie.";
+                                    color: #6b7c72;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        border-radius: 20px;
+                        border-width: 1px;
+                        border-color: #d7dfd7;
+                        background: #f3f6f3;
+
+                        ScrollView {
+                            horizontal-stretch: 1;
+                            vertical-stretch: 1;
+
+                            VerticalBox {
+                                padding: 16px;
+                                spacing: 16px;
+
+                                Rectangle {
+                                    border-radius: 18px;
+                                    border-width: 1px;
+                                    border-color: #d7dfd7;
+                                    background: #fbfcfb;
+
+                                    VerticalBox {
+                                        padding: 14px;
+                                        spacing: 10px;
+
+                                        Text {
+                                            text: root.worker_existing ? "Modifier une fiche" : "Nouvelle fiche";
+                                            color: #234035;
+                                            font-size: 16px;
+                                            font-weight: 700;
+                                        }
+
+                                        if root.worker_existing : Text {
+                                            text: "Identifiant interne : " + root.worker_form_id;
+                                            color: #6b7c72;
+                                            font-size: 11px;
+                                        }
+
+                                        FieldLabel { text: "Nom"; }
+                                        LineEdit { text <=> root.worker_last_name; accessible-label: "Nom"; }
+
+                                        FieldLabel { text: "Prenom"; }
+                                        LineEdit { text <=> root.worker_first_name; accessible-label: "Prenom"; }
+
+                                        FieldLabel { text: "Poste"; }
+                                        ComboBox {
+                                            model: root.role_options;
+                                            current-index <=> root.worker_role_index;
+                                            accessible-label: "Poste";
+                                        }
+
+                                        HorizontalBox {
+                                            spacing: 8px;
+
+                                            Button {
+                                                text: "Enregistrer la fiche";
+                                                enabled: root.can_save_worker;
+                                                clicked => {
+                                                    root.save_worker(root.worker_form_id, root.worker_last_name, root.worker_first_name, root.worker_role_index);
+                                                }
+                                            }
+
+                                            Button {
+                                                text: "Supprimer";
+                                                enabled: root.worker_existing;
+                                                clicked => { root.delete_worker(root.worker_form_id); }
+                                            }
+
+                                            Button {
+                                                text: "Vider le formulaire";
+                                                clicked => { root.clear_worker_form(); }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    border-radius: 18px;
+                                    border-width: 1px;
+                                    border-color: #d7dfd7;
+                                    background: #fbfcfb;
+
+                                    VerticalBox {
+                                        padding: 14px;
+                                        spacing: 10px;
+
+                                        Text {
+                                            text: "Catalogue des postes";
+                                            color: #234035;
+                                            font-size: 16px;
+                                            font-weight: 700;
+                                        }
+
+                                        FieldLabel { text: "Ajouter un nouveau poste"; }
+                                        HorizontalBox {
+                                            spacing: 8px;
+
+                                            LineEdit {
+                                                horizontal-stretch: 1;
+                                                text <=> root.new_role_name;
+                                                accessible-label: "Nouveau poste";
+                                            }
+
+                                            Button {
+                                                text: "Ajouter";
+                                                enabled: root.can_add_job_role;
+                                                clicked => { root.add_job_role(root.new_role_name); }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
